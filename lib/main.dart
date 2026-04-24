@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -25,6 +26,7 @@ class CruchefApp extends StatefulWidget {
 class _CruchefAppState extends State<CruchefApp> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final CruchefApi _api = CruchefApi();
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
   final GlobalKey<ScaffoldMessengerState> _scaffoldMessengerKey =
       GlobalKey<ScaffoldMessengerState>();
   final Map<String, int> _cart = <String, int>{};
@@ -36,6 +38,7 @@ class _CruchefAppState extends State<CruchefApp> {
   List<Dish> _dishes = <Dish>[];
   List<OrderRecord> _orders = <OrderRecord>[];
   String? _selectedRestaurantName;
+  String _restaurantSearchQuery = '';
   String _selectedCategory = 'Todas';
 
   @override
@@ -77,6 +80,17 @@ class _CruchefAppState extends State<CruchefApp> {
       }
     }
     return _restaurants.first;
+  }
+
+  List<RestaurantSummary> get _filteredRestaurants {
+    final String query = normalizeRestaurantValue(_restaurantSearchQuery);
+    if (query.isEmpty) {
+      return _restaurants;
+    }
+    return _restaurants.where((RestaurantSummary restaurant) {
+      return normalizeRestaurantValue(restaurant.name).contains(query) ||
+          normalizeRestaurantValue(restaurant.qrCode).contains(query);
+    }).toList(growable: false);
   }
 
   List<String> get _categories {
@@ -274,6 +288,8 @@ class _CruchefAppState extends State<CruchefApp> {
   void _selectRestaurant(String restaurantName) {
     setState(() {
       _selectedRestaurantName = restaurantName;
+      _restaurantSearchQuery = '';
+      _manualQrController.clear();
       _selectedCategory = 'Todas';
       _cart.clear();
     });
@@ -322,22 +338,56 @@ class _CruchefAppState extends State<CruchefApp> {
   }
 
   void _submitManualQr() {
-    final bool found = _applyQrCode(_manualQrController.text);
+    final String value = _manualQrController.text.trim();
+    final bool found = _applyQrCode(value);
+    setState(() {
+      _restaurantSearchQuery = found ? '' : value;
+    });
     _manualQrController.clear();
     _showSnackBar(
-      found ? 'Restaurante actualizado.' : 'QR no reconocido.',
+      found ? 'Restaurante actualizado.' : 'Busca el restaurante por nombre o QR.',
       backgroundColor:
           found ? const Color(0xFF163928) : const Color(0xFF4C1D1D),
     );
   }
 
-  void _openScanner() {
-    Navigator.of(context).push<void>(
+  Future<void> _openScanner() async {
+    final PermissionStatus status = await Permission.camera.status;
+    PermissionStatus resolvedStatus = status;
+
+    if (status.isDenied) {
+      resolvedStatus = await Permission.camera.request();
+    }
+
+    if (!mounted) {
+      return;
+    }
+
+    if (resolvedStatus.isPermanentlyDenied || resolvedStatus.isRestricted) {
+      _showSnackBar(
+        'La camara esta bloqueada para CruChef. Activa el permiso en ajustes.',
+      );
+      await openAppSettings();
+      return;
+    }
+
+    if (!resolvedStatus.isGranted) {
+      _showSnackBar('No se concedio el permiso de camara.');
+      return;
+    }
+
+    final NavigatorState? navigator = _navigatorKey.currentState;
+    if (navigator == null) {
+      _showSnackBar('No se pudo abrir el escaner en este momento.');
+      return;
+    }
+
+    await navigator.push<void>(
       MaterialPageRoute<void>(
         builder: (BuildContext context) => ScannerPage(
           onDetected: (String code) {
             final bool found = _applyQrCode(code);
-            Navigator.of(context).pop();
+            navigator.pop();
             if (!mounted) {
               return;
             }
@@ -352,6 +402,96 @@ class _CruchefAppState extends State<CruchefApp> {
         ),
       ),
     );
+  }
+
+  void _updateRestaurantSearch(String value) {
+    setState(() {
+      _restaurantSearchQuery = value;
+    });
+  }
+
+  Future<void> _updateProfileName(String displayName) async {
+    final User? user = _firebaseUser;
+    final String trimmedName = displayName.trim();
+    if (user == null || trimmedName.isEmpty) {
+      return;
+    }
+
+    setState(() {
+      _isBusy = true;
+    });
+
+    try {
+      await user.updateDisplayName(trimmedName);
+      await user.reload();
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _isBusy = false;
+      });
+
+      _showSnackBar(
+        'Perfil actualizado.',
+        backgroundColor: const Color(0xFF163928),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isBusy = false;
+      });
+      _showSnackBar('No se pudo actualizar el perfil: $error');
+    }
+  }
+
+  Future<void> _sendPasswordReset() async {
+    final User? user = _firebaseUser;
+    final String email = user?.email?.trim() ?? '';
+    if (email.isEmpty) {
+      _showSnackBar('Tu cuenta no tiene un correo disponible.');
+      return;
+    }
+
+    setState(() {
+      _isBusy = true;
+    });
+
+    try {
+      await _auth.sendPasswordResetEmail(email: email);
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _isBusy = false;
+      });
+
+      _showSnackBar(
+        'Te enviamos un correo para cambiar tu contrasena.',
+        backgroundColor: const Color(0xFF163928),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isBusy = false;
+      });
+      _showSnackBar('No se pudo enviar el correo de recuperacion: $error');
+    }
+  }
+
+  Future<void> _refreshProfile() async {
+    final User? user = _firebaseUser;
+    if (user != null) {
+      await user.reload();
+    }
+    await _bootstrap();
   }
 
   Future<void> _placeOrder() async {
@@ -537,6 +677,7 @@ class _CruchefAppState extends State<CruchefApp> {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: theme,
+      navigatorKey: _navigatorKey,
       scaffoldMessengerKey: _scaffoldMessengerKey,
       home: Stack(
         children: <Widget>[
@@ -548,7 +689,7 @@ class _CruchefAppState extends State<CruchefApp> {
               : UserShell(
                   user: _firebaseUser!,
                   backendOnline: _backendOnline,
-                  restaurants: _restaurants,
+                  restaurants: _filteredRestaurants,
                   selectedRestaurant: _selectedRestaurant,
                   categories: _categories,
                   selectedCategory: _selectedCategory,
@@ -567,10 +708,14 @@ class _CruchefAppState extends State<CruchefApp> {
                   onRemoveFromCart: _removeFromCart,
                   onOpenScanner: _openScanner,
                   onSubmitManualQr: _submitManualQr,
+                  onRestaurantSearchChanged: _updateRestaurantSearch,
                   onAnalyzeVoiceText: _analyzeVoiceText,
                   onPlaceOrder: _placeOrder,
                   onRateOrder: _rateOrder,
                   onRefresh: _bootstrap,
+                  onRefreshProfile: _refreshProfile,
+                  onUpdateProfileName: _updateProfileName,
+                  onSendPasswordReset: _sendPasswordReset,
                   onLogout: _logout,
                 ),
           if (_isBusy) const BusyOverlay(),
@@ -698,10 +843,14 @@ class UserShell extends StatefulWidget {
     required this.onRemoveFromCart,
     required this.onOpenScanner,
     required this.onSubmitManualQr,
+    required this.onRestaurantSearchChanged,
     required this.onAnalyzeVoiceText,
     required this.onPlaceOrder,
     required this.onRateOrder,
     required this.onRefresh,
+    required this.onRefreshProfile,
+    required this.onUpdateProfileName,
+    required this.onSendPasswordReset,
     required this.onLogout,
   });
 
@@ -726,10 +875,14 @@ class UserShell extends StatefulWidget {
   final ValueChanged<Dish> onRemoveFromCart;
   final VoidCallback onOpenScanner;
   final VoidCallback onSubmitManualQr;
+  final ValueChanged<String> onRestaurantSearchChanged;
   final Future<void> Function() onAnalyzeVoiceText;
   final Future<void> Function() onPlaceOrder;
   final Future<void> Function(OrderRecord order) onRateOrder;
   final Future<void> Function() onRefresh;
+  final Future<void> Function() onRefreshProfile;
+  final Future<void> Function(String displayName) onUpdateProfileName;
+  final Future<void> Function() onSendPasswordReset;
   final Future<void> Function() onLogout;
 
   @override
@@ -762,6 +915,7 @@ class _UserShellState extends State<UserShell> {
         onRemoveFromCart: widget.onRemoveFromCart,
         onOpenScanner: widget.onOpenScanner,
         onSubmitManualQr: widget.onSubmitManualQr,
+        onRestaurantSearchChanged: widget.onRestaurantSearchChanged,
         onAnalyzeVoiceText: widget.onAnalyzeVoiceText,
         onPlaceOrder: widget.onPlaceOrder,
         onRefresh: widget.onRefresh,
@@ -773,10 +927,11 @@ class _UserShellState extends State<UserShell> {
       ),
       ProfilePage(
         user: widget.user,
-        backendOnline: widget.backendOnline,
         ordersCount: widget.trackingOrders.length,
         historyCount: widget.historyOrders.length,
-        onRefresh: widget.onRefresh,
+        onRefresh: widget.onRefreshProfile,
+        onUpdateProfileName: widget.onUpdateProfileName,
+        onSendPasswordReset: widget.onSendPasswordReset,
         onLogout: widget.onLogout,
       ),
     ];
@@ -847,6 +1002,7 @@ class MenuPage extends StatelessWidget {
     required this.onRemoveFromCart,
     required this.onOpenScanner,
     required this.onSubmitManualQr,
+    required this.onRestaurantSearchChanged,
     required this.onAnalyzeVoiceText,
     required this.onPlaceOrder,
     required this.onRefresh,
@@ -871,6 +1027,7 @@ class MenuPage extends StatelessWidget {
   final ValueChanged<Dish> onRemoveFromCart;
   final VoidCallback onOpenScanner;
   final VoidCallback onSubmitManualQr;
+  final ValueChanged<String> onRestaurantSearchChanged;
   final Future<void> Function() onAnalyzeVoiceText;
   final Future<void> Function() onPlaceOrder;
   final Future<void> Function() onRefresh;
@@ -927,15 +1084,17 @@ class MenuPage extends StatelessWidget {
                 const SizedBox(height: 16),
                 TextField(
                   controller: manualQrController,
-                  textCapitalization: TextCapitalization.characters,
+                  textCapitalization: TextCapitalization.words,
                   decoration: InputDecoration(
-                    hintText: 'Codigo QR del restaurante',
-                    prefixIcon: const Icon(Icons.qr_code_2),
+                    hintText: 'Buscar restaurante o pegar QR',
+                    prefixIcon: const Icon(Icons.search),
                     suffixIcon: IconButton(
                       onPressed: onSubmitManualQr,
                       icon: const Icon(Icons.arrow_forward),
                     ),
                   ),
+                  onChanged: onRestaurantSearchChanged,
+                  onSubmitted: (_) => onSubmitManualQr(),
                 ),
                 const SizedBox(height: 14),
                 TextField(
@@ -954,21 +1113,28 @@ class MenuPage extends StatelessWidget {
                 const SizedBox(height: 16),
                 SizedBox(
                   height: 48,
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: restaurants.length,
-                    separatorBuilder: (_, __) => const SizedBox(width: 10),
-                    itemBuilder: (BuildContext context, int index) {
-                      final RestaurantSummary restaurant = restaurants[index];
-                      final bool selected =
-                          restaurant.name == selectedRestaurant?.name;
-                      return ChoiceChip(
-                        selected: selected,
-                        label: Text(restaurant.name),
-                        onSelected: (_) => onSelectRestaurant(restaurant.name),
-                      );
-                    },
-                  ),
+                  child: restaurants.isEmpty
+                      ? const Center(
+                          child: Text(
+                            'No encontramos restaurantes con esa busqueda.',
+                            style: TextStyle(color: Colors.white54),
+                          ),
+                        )
+                      : ListView.separated(
+                          scrollDirection: Axis.horizontal,
+                          itemCount: restaurants.length,
+                          separatorBuilder: (_, __) => const SizedBox(width: 10),
+                          itemBuilder: (BuildContext context, int index) {
+                            final RestaurantSummary restaurant = restaurants[index];
+                            final bool selected =
+                                restaurant.name == selectedRestaurant?.name;
+                            return ChoiceChip(
+                              selected: selected,
+                              label: Text(restaurant.name),
+                              onSelected: (_) => onSelectRestaurant(restaurant.name),
+                            );
+                          },
+                        ),
                 ),
                 const SizedBox(height: 18),
                 SizedBox(
@@ -1115,22 +1281,36 @@ class ProfilePage extends StatelessWidget {
   const ProfilePage({
     super.key,
     required this.user,
-    required this.backendOnline,
     required this.ordersCount,
     required this.historyCount,
     required this.onRefresh,
+    required this.onUpdateProfileName,
+    required this.onSendPasswordReset,
     required this.onLogout,
   });
 
   final User user;
-  final bool backendOnline;
   final int ordersCount;
   final int historyCount;
   final Future<void> Function() onRefresh;
+  final Future<void> Function(String displayName) onUpdateProfileName;
+  final Future<void> Function() onSendPasswordReset;
   final Future<void> Function() onLogout;
 
   @override
   Widget build(BuildContext context) {
+    final String displayName =
+        (user.displayName?.trim().isNotEmpty ?? false)
+            ? user.displayName!.trim()
+            : 'Cliente CruChef';
+    final String email = user.email?.trim() ?? 'Sin correo vinculado';
+    final String phone = user.phoneNumber?.trim().isNotEmpty ?? false
+        ? user.phoneNumber!.trim()
+        : 'No registrado';
+    final String memberSince = formatProfileDate(user.metadata.creationTime);
+    final String verificationLabel =
+        user.emailVerified ? 'Correo verificado' : 'Correo pendiente';
+
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 110),
       children: <Widget>[
@@ -1140,7 +1320,7 @@ class ProfilePage extends StatelessWidget {
               radius: 28,
               backgroundColor: const Color(0x33E34B4B),
               child: Text(
-                buildInitials(user.displayName ?? user.email ?? 'CC'),
+                buildInitials(displayName),
                 style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
               ),
             ),
@@ -1150,11 +1330,11 @@ class ProfilePage extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
                   Text(
-                    user.displayName ?? 'Cliente CruChef',
+                    displayName,
                     style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900),
                   ),
                   const SizedBox(height: 2),
-                  Text(user.email ?? '', style: const TextStyle(color: Colors.white54)),
+                  Text(email, style: const TextStyle(color: Colors.white54)),
                 ],
               ),
             ),
@@ -1169,20 +1349,72 @@ class ProfilePage extends StatelessWidget {
             const SizedBox(width: 12),
             Expanded(
               child: ProfileMetric(
-                label: 'API',
-                value: backendOnline ? 'OK' : 'OFF',
+                label: 'Estado',
+                value: user.emailVerified ? 'OK' : 'Pend.',
               ),
             ),
           ],
         ),
         const SizedBox(height: 18),
         ProfileInfoCard(
-          title: 'Cuenta',
+          title: 'Informacion personal',
           rows: <ProfileRowData>[
-            ProfileRowData(label: 'UID', value: user.uid),
-            ProfileRowData(label: 'Correo', value: user.email ?? ''),
-            ProfileRowData(label: 'Metodo', value: 'Firebase Auth'),
+            ProfileRowData(label: 'Nombre', value: displayName),
+            ProfileRowData(label: 'Correo', value: email),
+            ProfileRowData(label: 'Telefono', value: phone),
+            ProfileRowData(label: 'Verificacion', value: verificationLabel),
+            ProfileRowData(label: 'Miembro desde', value: memberSince),
           ],
+        ),
+        const SizedBox(height: 16),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(18),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                const Text(
+                  'Opciones de perfil',
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 14),
+                FilledButton.icon(
+                  onPressed: () async {
+                    final String? updatedName = await showDialog<String>(
+                      context: context,
+                      builder: (BuildContext context) => EditProfileNameDialog(
+                        initialValue: displayName,
+                      ),
+                    );
+                    if (updatedName == null || updatedName.trim().isEmpty) {
+                      return;
+                    }
+                    await onUpdateProfileName(updatedName);
+                  },
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size.fromHeight(54),
+                    backgroundColor: const Color(0xFFFFB27A),
+                    foregroundColor: Colors.black,
+                  ),
+                  icon: const Icon(Icons.edit_outlined),
+                  label: const Text('Editar nombre'),
+                ),
+                const SizedBox(height: 12),
+                FilledButton.icon(
+                  onPressed: () async {
+                    await onSendPasswordReset();
+                  },
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size.fromHeight(54),
+                    backgroundColor: const Color(0xFF3B4552),
+                    foregroundColor: Colors.white,
+                  ),
+                  icon: const Icon(Icons.lock_reset),
+                  label: const Text('Cambiar contrasena'),
+                ),
+              ],
+            ),
+          ),
         ),
         const SizedBox(height: 16),
         Card(
@@ -1196,10 +1428,11 @@ class ProfilePage extends StatelessWidget {
                   },
                   style: FilledButton.styleFrom(
                     minimumSize: const Size.fromHeight(54),
-                    backgroundColor: const Color(0xFF232326),
+                    backgroundColor: const Color(0xFF2D5646),
+                    foregroundColor: Colors.white,
                   ),
                   icon: const Icon(Icons.sync),
-                  label: const Text('Sincronizar'),
+                  label: const Text('Actualizar perfil'),
                 ),
                 const SizedBox(height: 12),
                 FilledButton.icon(
@@ -1209,6 +1442,7 @@ class ProfilePage extends StatelessWidget {
                   style: FilledButton.styleFrom(
                     minimumSize: const Size.fromHeight(54),
                     backgroundColor: const Color(0xFFE34B4B),
+                    foregroundColor: Colors.white,
                   ),
                   icon: const Icon(Icons.logout),
                   label: const Text('Cerrar sesion'),
@@ -1231,22 +1465,91 @@ class ScannerPage extends StatefulWidget {
   State<ScannerPage> createState() => _ScannerPageState();
 }
 
-class _ScannerPageState extends State<ScannerPage> {
-  final MobileScannerController _controller = MobileScannerController();
+class _ScannerPageState extends State<ScannerPage>
+    with WidgetsBindingObserver {
+  final MobileScannerController _controller = MobileScannerController(
+    detectionSpeed: DetectionSpeed.noDuplicates,
+  );
   bool _handled = false;
-  bool _hasPermission = true;
+  bool _hasPermission = false;
+  bool _isPreparing = true;
+  PermissionStatus _permissionStatus = PermissionStatus.denied;
+
+  Future<void> _prepareScanner() async {
+    PermissionStatus status = await Permission.camera.status;
+    if (!status.isGranted) {
+      status = await Permission.camera.request();
+    }
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _isPreparing = false;
+      _hasPermission = status.isGranted;
+      _permissionStatus = status;
+    });
+
+    if (status.isGranted) {
+      await _startScanner();
+    } else {
+      await _stopScanner();
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _prepareScanner();
+    });
+  }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _controller.dispose();
     super.dispose();
   }
+
+  Future<void> _startScanner() async {
+    try {
+      await _controller.start();
+    } catch (_) {}
+  }
+
+  Future<void> _stopScanner() async {
+    try {
+      await _controller.stop();
+    } catch (_) {}
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!_hasPermission || !_mountedForLifecycle) {
+      return;
+    }
+
+    if (state == AppLifecycleState.resumed) {
+      _startScanner();
+    } else if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached ||
+        state == AppLifecycleState.hidden) {
+      _stopScanner();
+    }
+  }
+
+  bool get _mountedForLifecycle => mounted && !_handled;
 
   void _handleCode(String? value) {
     if (_handled || value == null || value.trim().isEmpty) {
       return;
     }
     _handled = true;
+    _stopScanner();
     widget.onDetected(value);
   }
 
@@ -1258,51 +1561,282 @@ class _ScannerPageState extends State<ScannerPage> {
         backgroundColor: Colors.black,
         title: const Text('Escanear QR'),
       ),
-      body: Stack(
-        fit: StackFit.expand,
-        children: <Widget>[
-          MobileScanner(
-            controller: _controller,
-            errorBuilder: (BuildContext context, MobileScannerException error) {
-              _hasPermission = false;
-              return const ScannerPermissionCard();
-            },
-            onDetect: (BarcodeCapture capture) {
-              final String? value =
-                  capture.barcodes.isEmpty ? null : capture.barcodes.first.rawValue;
-              _handleCode(value);
-            },
-          ),
-          if (_hasPermission)
-            Align(
-              alignment: Alignment.topCenter,
-              child: Container(
-                margin: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                decoration: BoxDecoration(
-                  color: Colors.black54,
-                  borderRadius: BorderRadius.circular(16),
+      body: _isPreparing
+          ? const Center(
+              child: CircularProgressIndicator(color: Color(0xFFE34B4B)),
+            )
+          : !_hasPermission
+              ? ScannerPermissionCard(
+                  permissionStatus: _permissionStatus,
+                  onRetry: _prepareScanner,
+                  onOpenSettings: () async {
+                    await openAppSettings();
+                  },
+                )
+              : Stack(
+                  fit: StackFit.expand,
+                  children: <Widget>[
+                    MobileScanner(
+                      controller: _controller,
+                      onDetect: (BarcodeCapture capture) {
+                        final String? value = capture.barcodes.isEmpty
+                            ? null
+                            : capture.barcodes.first.rawValue;
+                        _handleCode(value);
+                      },
+                    ),
+                    const IgnorePointer(
+                      child: _ScannerOverlay(),
+                    ),
+                    Align(
+                      alignment: Alignment.topCenter,
+                      child: Container(
+                        margin: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 10,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.black54,
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: const Text(
+                          'Apunta la camara al QR del restaurante.',
+                          style: TextStyle(color: Colors.white70),
+                        ),
+                      ),
+                    ),
+                    Align(
+                      alignment: Alignment.bottomCenter,
+                      child: Container(
+                        padding: const EdgeInsets.all(20),
+                        decoration: const BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: <Color>[Colors.transparent, Colors.black87],
+                          ),
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: <Widget>[
+                            const Text(
+                              'Escanea el QR para entrar directo al restaurante',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            OutlinedButton.icon(
+                              onPressed: () async {
+                                await _controller.toggleTorch();
+                              },
+                              icon: const Icon(Icons.flashlight_on_outlined),
+                              label: const Text('Linterna'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                child: const Text(
-                  'La camara pedira permiso si aun no esta habilitada.',
-                  style: TextStyle(color: Colors.white70),
-                ),
+    );
+  }
+}
+
+class _ScannerOverlay extends StatelessWidget {
+  const _ScannerOverlay();
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final double frameSize = constraints.maxWidth < 360
+            ? constraints.maxWidth * 0.72
+            : constraints.maxWidth * 0.68;
+        final double clampedSize = frameSize.clamp(220.0, 320.0).toDouble();
+
+        return Center(
+          child: Container(
+            width: clampedSize,
+            height: clampedSize,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(28),
+              border: Border.all(
+                color: const Color(0xAAFFFFFF),
+                width: 1.4,
               ),
+              boxShadow: const <BoxShadow>[
+                BoxShadow(
+                  color: Color(0x33000000),
+                  blurRadius: 24,
+                  spreadRadius: 8,
+                ),
+              ],
             ),
-          Align(
-            alignment: Alignment.bottomCenter,
-            child: Container(
-              padding: const EdgeInsets.all(20),
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: <Color>[Colors.transparent, Colors.black87],
-                ),
-              ),
-              child: const Text(
-                'Apunta al QR del restaurante',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+            child: Stack(
+              fit: StackFit.expand,
+              children: const <Widget>[
+                _ScannerCorner(alignment: Alignment.topLeft),
+                _ScannerCorner(alignment: Alignment.topRight),
+                _ScannerCorner(alignment: Alignment.bottomLeft),
+                _ScannerCorner(alignment: Alignment.bottomRight),
+                _ScannerScanLine(),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _ScannerCorner extends StatelessWidget {
+  const _ScannerCorner({required this.alignment});
+
+  final Alignment alignment;
+
+  @override
+  Widget build(BuildContext context) {
+    final bool isTop = alignment.y < 0;
+    final bool isLeft = alignment.x < 0;
+
+    return Align(
+      alignment: alignment,
+      child: Container(
+        width: 42,
+        height: 42,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.only(
+            topLeft: isTop && isLeft ? const Radius.circular(22) : Radius.zero,
+            topRight:
+                isTop && !isLeft ? const Radius.circular(22) : Radius.zero,
+            bottomLeft:
+                !isTop && isLeft ? const Radius.circular(22) : Radius.zero,
+            bottomRight:
+                !isTop && !isLeft ? const Radius.circular(22) : Radius.zero,
+          ),
+          border: Border(
+            top: isTop
+                ? const BorderSide(color: Color(0xFFE34B4B), width: 4)
+                : BorderSide.none,
+            left: isLeft
+                ? const BorderSide(color: Color(0xFFE34B4B), width: 4)
+                : BorderSide.none,
+            right: !isLeft
+                ? const BorderSide(color: Color(0xFFE34B4B), width: 4)
+                : BorderSide.none,
+            bottom: !isTop
+                ? const BorderSide(color: Color(0xFFE34B4B), width: 4)
+                : BorderSide.none,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ScannerScanLine extends StatefulWidget {
+  const _ScannerScanLine();
+
+  @override
+  State<_ScannerScanLine> createState() => _ScannerScanLineState();
+}
+
+class _ScannerScanLineState extends State<_ScannerScanLine>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _animationController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1800),
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _animationController,
+      builder: (BuildContext context, Widget? child) {
+        return Align(
+          alignment: Alignment(0, (_animationController.value * 1.6) - 0.8),
+          child: child,
+        );
+      },
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 16),
+        height: 3,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(999),
+          gradient: const LinearGradient(
+            colors: <Color>[
+              Colors.transparent,
+              Color(0xFFFF8C42),
+              Color(0xFFE34B4B),
+              Colors.transparent,
+            ],
+          ),
+          boxShadow: const <BoxShadow>[
+            BoxShadow(
+              color: Color(0x66E34B4B),
+              blurRadius: 12,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class CruchefBrandMark extends StatelessWidget {
+  const CruchefBrandMark({
+    super.key,
+    this.size = 56,
+  });
+
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(size * 0.28),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: <Color>[Color(0xFFE34B4B), Color(0xFFFF8C42)],
+        ),
+        boxShadow: const <BoxShadow>[
+          BoxShadow(
+            color: Color(0x44E34B4B),
+            blurRadius: 24,
+            offset: Offset(0, 12),
+          ),
+        ],
+      ),
+      child: Stack(
+        alignment: Alignment.center,
+        children: <Widget>[
+          Icon(
+            Icons.restaurant_menu_rounded,
+            color: Colors.white,
+            size: size * 0.46,
+          ),
+          Positioned(
+            bottom: size * 0.12,
+            child: Text(
+              'C',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: size * 0.25,
+                fontWeight: FontWeight.w900,
               ),
             ),
           ),
@@ -1323,6 +1857,8 @@ class LoginIntroPanel extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.center,
         children: const <Widget>[
+          CruchefBrandMark(size: 88),
+          SizedBox(height: 20),
           Text(
             'BIENVENIDO',
             style: TextStyle(
@@ -1334,8 +1870,13 @@ class LoginIntroPanel extends StatelessWidget {
           ),
           SizedBox(height: 14),
           Text(
-            'Inicia sesion',
+            'CruChef',
             style: TextStyle(fontSize: 56, fontWeight: FontWeight.w900, height: 0.95),
+          ),
+          SizedBox(height: 10),
+          Text(
+            'Ordena mas rapido con QR, seguimiento y tu perfil centralizado.',
+            style: TextStyle(color: Colors.white60, fontSize: 16, height: 1.5),
           ),
           SizedBox(height: 18),
           FeatureTile(
@@ -1381,11 +1922,7 @@ class LoginFormCard extends StatelessWidget {
               children: <Widget>[
                 Row(
                   children: const <Widget>[
-                    CircleAvatar(
-                      radius: 22,
-                      backgroundColor: Color(0x33E34B4B),
-                      child: Icon(Icons.restaurant, color: Colors.white),
-                    ),
+                    CruchefBrandMark(size: 44),
                     SizedBox(width: 12),
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2213,7 +2750,16 @@ class EmptyStateCard extends StatelessWidget {
 }
 
 class ScannerPermissionCard extends StatelessWidget {
-  const ScannerPermissionCard({super.key});
+  const ScannerPermissionCard({
+    super.key,
+    required this.permissionStatus,
+    required this.onRetry,
+    required this.onOpenSettings,
+  });
+
+  final PermissionStatus permissionStatus;
+  final Future<void> Function() onRetry;
+  final Future<void> Function() onOpenSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -2225,23 +2771,54 @@ class ScannerPermissionCard extends StatelessWidget {
             padding: const EdgeInsets.all(24),
             child: Column(
               mainAxisSize: MainAxisSize.min,
-              children: const <Widget>[
-                CircleAvatar(
+              children: <Widget>[
+                const CircleAvatar(
                   radius: 28,
                   backgroundColor: Color(0x22E34B4B),
                   child: Icon(Icons.camera_alt_outlined, color: Color(0xFFE34B4B)),
                 ),
-                SizedBox(height: 14),
-                Text(
+                const SizedBox(height: 14),
+                const Text(
                   'Permiso de camara requerido',
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
                 ),
-                SizedBox(height: 8),
+                const SizedBox(height: 8),
                 Text(
-                  'Acepta el permiso del sistema para leer el QR del restaurante.',
+                  permissionStatus.isPermanentlyDenied || permissionStatus.isRestricted
+                      ? 'Android bloqueo la camara para CruChef. Abre ajustes y habilita el permiso manualmente.'
+                      : 'Acepta el permiso del sistema para leer el QR del restaurante.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.white60, height: 1.4),
+                  style: const TextStyle(color: Colors.white60, height: 1.4),
+                ),
+                const SizedBox(height: 16),
+                if (!(permissionStatus.isPermanentlyDenied ||
+                    permissionStatus.isRestricted))
+                  FilledButton.icon(
+                    onPressed: () async {
+                      await onRetry();
+                    },
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFFE34B4B),
+                      minimumSize: const Size.fromHeight(50),
+                    ),
+                    icon: const Icon(Icons.camera_alt),
+                    label: const Text('Permitir camara'),
+                  ),
+                if (!(permissionStatus.isPermanentlyDenied ||
+                    permissionStatus.isRestricted))
+                  const SizedBox(height: 10),
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    await onOpenSettings();
+                  },
+                  icon: const Icon(Icons.settings_outlined),
+                  label: Text(
+                    permissionStatus.isPermanentlyDenied ||
+                            permissionStatus.isRestricted
+                        ? 'Abrir ajustes de permisos'
+                        : 'Abrir ajustes',
+                  ),
                 ),
               ],
             ),
@@ -2457,6 +3034,100 @@ class BusyOverlay extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class CameraPermissionDialog extends StatelessWidget {
+  const CameraPermissionDialog({
+    super.key,
+    required this.isPermanentlyDenied,
+    required this.onOpenSettings,
+  });
+
+  final bool isPermanentlyDenied;
+  final Future<void> Function() onOpenSettings;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Permiso de camara'),
+      content: Text(
+        isPermanentlyDenied
+            ? 'La camara esta bloqueada para CruChef. Activa el permiso desde ajustes.'
+            : 'CruChef necesita la camara para escanear el QR del restaurante.',
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancelar'),
+        ),
+        if (isPermanentlyDenied)
+          FilledButton(
+            onPressed: () async {
+              await onOpenSettings();
+              if (context.mounted) {
+                Navigator.of(context).pop();
+              }
+            },
+            child: const Text('Abrir ajustes'),
+          )
+        else
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Entendido'),
+          ),
+      ],
+    );
+  }
+}
+
+class EditProfileNameDialog extends StatefulWidget {
+  const EditProfileNameDialog({
+    super.key,
+    required this.initialValue,
+  });
+
+  final String initialValue;
+
+  @override
+  State<EditProfileNameDialog> createState() => _EditProfileNameDialogState();
+}
+
+class _EditProfileNameDialogState extends State<EditProfileNameDialog> {
+  late final TextEditingController _controller =
+      TextEditingController(text: widget.initialValue);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Editar nombre'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        textCapitalization: TextCapitalization.words,
+        decoration: const InputDecoration(
+          labelText: 'Nombre visible',
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancelar'),
+        ),
+        FilledButton(
+          onPressed: () {
+            Navigator.of(context).pop(_controller.text.trim());
+          },
+          child: const Text('Guardar'),
+        ),
+      ],
     );
   }
 }
@@ -3114,6 +3785,16 @@ String formatOrderTime(DateTime dateTime) {
     return 'Hace ${diff.inHours} h';
   }
   return 'Hace ${diff.inDays} dias';
+}
+
+String formatProfileDate(DateTime? dateTime) {
+  if (dateTime == null) {
+    return 'No disponible';
+  }
+  final DateTime local = dateTime.toLocal();
+  final String day = local.day.toString().padLeft(2, '0');
+  final String month = local.month.toString().padLeft(2, '0');
+  return '$day/$month/${local.year}';
 }
 
 String slugify(String value) {
