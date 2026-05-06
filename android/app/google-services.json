@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "451514637467",
+    "project_id": "cruchefangular",
+    "storage_bucket": "cruchefangular.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:451514637467:android:fc1f8d1db4ce18fb7afa3e",
+        "android_client_info": {
+          "package_name": "com.example.cruchef"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAv3Te9SUCh5R0iL189foEB-sBqic2-5r4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
