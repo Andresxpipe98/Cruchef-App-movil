@@ -1,11 +1,11 @@
 {
-    "name": "cruchef",
-    "short_name": "cruchef",
+    "name": "CruChef Móvil",
+    "short_name": "CruChef",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#121212",
+    "theme_color": "#E65151",
+    "description": "Aplicación móvil de CruChef para clientes, pedidos por QR y seguimiento.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

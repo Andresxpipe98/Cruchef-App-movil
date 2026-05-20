@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -5,6 +7,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'firebase_options.dart';
 import 'ui/cruchef_design.dart';
@@ -34,9 +37,17 @@ class _CruchefAppState extends State<CruchefApp> {
   final Map<String, int> _cart = <String, int>{};
   final TextEditingController _manualQrController = TextEditingController();
   final TextEditingController _voiceController = TextEditingController();
+  final TextEditingController _orderNotesController = TextEditingController();
+  final TextEditingController _paymentNameController = TextEditingController();
+  final TextEditingController _paymentDocumentController =
+      TextEditingController();
+  final TextEditingController _paymentPhoneController = TextEditingController();
+  final TextEditingController _paymentReferenceController =
+      TextEditingController();
 
   bool _isBusy = false;
   bool _firebaseOnline = true;
+  bool _draftRestored = false;
   String? _loginError;
   List<RestaurantSummary> _restaurants = <RestaurantSummary>[];
   List<Dish> _dishes = <Dish>[];
@@ -44,11 +55,19 @@ class _CruchefAppState extends State<CruchefApp> {
   String? _selectedRestaurantKey;
   String _restaurantSearchQuery = '';
   String _selectedCategory = 'Todas';
+  PaymentMethod _selectedPaymentMethod = PaymentMethod.cash;
+  String _profilePhone = '';
+  String _profilePhotoUrl = '';
 
   @override
   void dispose() {
     _manualQrController.dispose();
     _voiceController.dispose();
+    _orderNotesController.dispose();
+    _paymentNameController.dispose();
+    _paymentDocumentController.dispose();
+    _paymentPhoneController.dispose();
+    _paymentReferenceController.dispose();
     super.dispose();
   }
 
@@ -198,6 +217,120 @@ class _CruchefAppState extends State<CruchefApp> {
     return total;
   }
 
+  String get _draftStorageKey {
+    final String uid = _firebaseUser?.uid ?? 'anonymous';
+    return 'cruchef_cart_draft_$uid';
+  }
+
+  Future<void> _saveCartDraft() async {
+    final User? user = _firebaseUser;
+    if (user == null) {
+      return;
+    }
+
+    final SharedPreferences preferences = await SharedPreferences.getInstance();
+    final Map<String, dynamic> draft = <String, dynamic>{
+      'restaurantKey': _selectedRestaurantKey,
+      'paymentMethod': _selectedPaymentMethod.name,
+      'paymentName': _paymentNameController.text.trim(),
+      'paymentDocument': _paymentDocumentController.text.trim(),
+      'paymentPhone': _paymentPhoneController.text.trim(),
+      'paymentReference': _paymentReferenceController.text.trim(),
+      'notes': _orderNotesController.text.trim(),
+      'cart': _cart,
+      'updatedAt': DateTime.now().toIso8601String(),
+    };
+    await preferences.setString(_draftStorageKey, jsonEncode(draft));
+  }
+
+  Future<void> _clearCartDraft() async {
+    final SharedPreferences preferences = await SharedPreferences.getInstance();
+    await preferences.remove(_draftStorageKey);
+  }
+
+  Future<void> _restoreCartDraft(
+    List<RestaurantSummary> restaurants,
+    List<Dish> dishes,
+  ) async {
+    final User? user = _firebaseUser;
+    if (user == null || _draftRestored) {
+      return;
+    }
+
+    _draftRestored = true;
+    final SharedPreferences preferences = await SharedPreferences.getInstance();
+    final String? rawDraft = preferences.getString(_draftStorageKey);
+    if (rawDraft == null || rawDraft.isEmpty) {
+      return;
+    }
+
+    try {
+      final Object? decoded = jsonDecode(rawDraft);
+      if (decoded is! Map<String, dynamic>) {
+        return;
+      }
+
+      final String restaurantKey = _readString(decoded, <String>[
+        'restaurantKey',
+      ]);
+      final bool restaurantExists = restaurants.any(
+        (RestaurantSummary restaurant) => restaurant.key == restaurantKey,
+      );
+      if (!restaurantExists) {
+        return;
+      }
+
+      final Object? rawCart = decoded['cart'];
+      if (rawCart is! Map<String, dynamic>) {
+        return;
+      }
+
+      final Set<String> validDishIds = dishes
+          .map((Dish dish) => dish.id)
+          .toSet();
+      final Map<String, int> restoredCart = <String, int>{};
+      for (final MapEntry<String, dynamic> entry in rawCart.entries) {
+        final int quantity = _readDynamicInt(entry.value);
+        if (quantity > 0 && validDishIds.contains(entry.key)) {
+          restoredCart[entry.key] = quantity;
+        }
+      }
+
+      if (restoredCart.isEmpty) {
+        return;
+      }
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _selectedRestaurantKey = restaurantKey;
+        _selectedPaymentMethod = parsePaymentMethod(
+          _readString(decoded, <String>['paymentMethod'], fallback: 'cash'),
+        );
+        _orderNotesController.text = _readString(decoded, <String>['notes']);
+        _paymentNameController.text = _readString(decoded, <String>[
+          'paymentName',
+        ]);
+        _paymentDocumentController.text = _readString(decoded, <String>[
+          'paymentDocument',
+        ]);
+        _paymentPhoneController.text = _readString(decoded, <String>[
+          'paymentPhone',
+        ]);
+        _paymentReferenceController.text = _readString(decoded, <String>[
+          'paymentReference',
+        ]);
+        _cart
+          ..clear()
+          ..addAll(restoredCart);
+      });
+    } catch (error) {
+      debugPrint('No se pudo restaurar el carrito pausado: $error');
+    }
+  }
+
   Dish? _findDish(String id) {
     for (final Dish dish in _dishes) {
       if (dish.id == id) {
@@ -206,8 +339,6 @@ class _CruchefAppState extends State<CruchefApp> {
     }
     return null;
   }
-
-  int _quantityForDish(String dishId) => _cart[dishId] ?? 0;
 
   void _showSnackBar(
     String message, {
@@ -279,6 +410,7 @@ class _CruchefAppState extends State<CruchefApp> {
     List<RestaurantSummary> restaurants = <RestaurantSummary>[];
     List<Dish> dishes = <Dish>[];
     List<OrderRecord> orders = <OrderRecord>[];
+    UserProfileData profile = const UserProfileData();
     String? syncWarning;
     bool firebaseConnected = false;
 
@@ -309,13 +441,18 @@ class _CruchefAppState extends State<CruchefApp> {
       try {
         orders = await _repository.getOrders(customerUid: user.uid);
       } on FirebaseException catch (error) {
-        syncWarning = _firebaseErrorMessage('ordenes', error);
+        syncWarning = _firebaseErrorMessage('órdenes', error);
         debugPrint(syncWarning);
       } catch (error) {
-        syncWarning =
-            'No se pudieron cargar las ordenes desde Firebase: $error';
+        syncWarning = 'No se pudieron cargar tus órdenes. Intenta nuevamente.';
         debugPrint(syncWarning);
       }
+    }
+
+    try {
+      profile = await _repository.getUserProfile(user.uid);
+    } catch (error) {
+      debugPrint('No se pudo cargar el perfil del usuario: $error');
     }
 
     if (!mounted) {
@@ -341,11 +478,14 @@ class _CruchefAppState extends State<CruchefApp> {
       _restaurants = resolvedRestaurants;
       _dishes = dishes;
       _orders = orders;
+      _profilePhone = profile.phone;
+      _profilePhotoUrl = profile.photoUrl;
       _selectedRestaurantKey = selectedRestaurantKey;
       _selectedCategory = 'Todas';
-      _cart.clear();
       _isBusy = false;
     });
+
+    await _restoreCartDraft(resolvedRestaurants, dishes);
 
     if (syncWarning != null) {
       _showSnackBar(syncWarning);
@@ -367,24 +507,76 @@ class _CruchefAppState extends State<CruchefApp> {
       _orders = <OrderRecord>[];
       _selectedRestaurantKey = null;
       _selectedCategory = 'Todas';
+      _selectedPaymentMethod = PaymentMethod.cash;
+      _profilePhone = '';
+      _profilePhotoUrl = '';
+      _orderNotesController.clear();
+      _clearPaymentControllers();
       _cart.clear();
+      _draftRestored = false;
     });
   }
 
   void _selectRestaurant(String restaurantKey) {
+    if (_selectedRestaurantKey == restaurantKey) {
+      return;
+    }
     setState(() {
       _selectedRestaurantKey = restaurantKey;
       _restaurantSearchQuery = '';
       _manualQrController.clear();
       _selectedCategory = 'Todas';
       _cart.clear();
+      _selectedPaymentMethod = PaymentMethod.cash;
+      _orderNotesController.clear();
+      _clearPaymentControllers();
     });
+    _saveCartDraft();
   }
 
   void _selectCategory(String category) {
     setState(() {
       _selectedCategory = category;
     });
+  }
+
+  void _selectPaymentMethod(PaymentMethod method) {
+    setState(() {
+      _selectedPaymentMethod = method;
+    });
+    _saveCartDraft();
+  }
+
+  void _updateOrderNotes(String value) {
+    _saveCartDraft();
+  }
+
+  void _updatePaymentDetails(String value) {
+    _saveCartDraft();
+  }
+
+  void _clearPaymentControllers() {
+    _paymentNameController.clear();
+    _paymentDocumentController.clear();
+    _paymentPhoneController.clear();
+    _paymentReferenceController.clear();
+  }
+
+  void _cancelCart() {
+    if (_cart.isEmpty) {
+      return;
+    }
+    setState(() {
+      _cart.clear();
+      _selectedPaymentMethod = PaymentMethod.cash;
+      _orderNotesController.clear();
+      _clearPaymentControllers();
+    });
+    _clearCartDraft();
+    _showSnackBar(
+      'Carrito cancelado.',
+      backgroundColor: const Color(0xFF163928),
+    );
   }
 
   void _addToCart(Dish dish) {
@@ -395,6 +587,7 @@ class _CruchefAppState extends State<CruchefApp> {
     setState(() {
       _cart.update(dish.id, (int value) => value + 1, ifAbsent: () => 1);
     });
+    _saveCartDraft();
   }
 
   void _removeFromCart(Dish dish) {
@@ -402,21 +595,36 @@ class _CruchefAppState extends State<CruchefApp> {
     if (quantity == null) {
       return;
     }
+    if (quantity <= 1) {
+      _showSnackBar('El plato queda en 1. Usa Cancelar carrito para vaciarlo.');
+      return;
+    }
     setState(() {
-      if (quantity <= 1) {
-        _cart.remove(dish.id);
-      } else {
-        _cart[dish.id] = quantity - 1;
-      }
+      _cart[dish.id] = quantity - 1;
     });
+    _saveCartDraft();
   }
 
   bool _applyQrCode(String rawCode) {
+    final String trimmedCode = rawCode.trim();
+    final String? restaurantKeyFromUrl = restaurantKeyFromPublicMenuUrl(
+      trimmedCode,
+    );
+    if (restaurantKeyFromUrl != null) {
+      for (final RestaurantSummary restaurant in _restaurants) {
+        if (restaurant.key == restaurantKeyFromUrl) {
+          _selectRestaurant(restaurant.key);
+          return true;
+        }
+      }
+    }
+
     final String normalized = normalizeRestaurantValue(rawCode);
     for (final RestaurantSummary restaurant in _restaurants) {
       if (normalizeRestaurantValue(restaurant.qrCode) == normalized ||
           normalizeRestaurantValue(restaurant.name) == normalized ||
-          normalizeRestaurantValue(restaurant.key) == normalized) {
+          normalizeRestaurantValue(restaurant.key) == normalized ||
+          normalizeRestaurantValue(restaurant.id) == normalized) {
         _selectRestaurant(restaurant.key);
         return true;
       }
@@ -455,14 +663,14 @@ class _CruchefAppState extends State<CruchefApp> {
 
     if (resolvedStatus.isPermanentlyDenied || resolvedStatus.isRestricted) {
       _showSnackBar(
-        'La camara esta bloqueada para CruChef. Activa el permiso en ajustes.',
+        'La cámara está bloqueada para CruChef. Activa el permiso en ajustes.',
       );
       await openAppSettings();
       return;
     }
 
     if (!resolvedStatus.isGranted) {
-      _showSnackBar('No se concedio el permiso de camara.');
+      _showSnackBar('No se concedió el permiso de cámara.');
       return;
     }
 
@@ -514,6 +722,12 @@ class _CruchefAppState extends State<CruchefApp> {
 
     try {
       await user.updateDisplayName(trimmedName);
+      await _repository.updateUserProfile(
+        user.uid,
+        displayName: trimmedName,
+        phone: _profilePhone,
+        photoUrl: _profilePhotoUrl,
+      );
       await user.reload();
 
       if (!mounted) {
@@ -521,6 +735,56 @@ class _CruchefAppState extends State<CruchefApp> {
       }
 
       setState(() {
+        _isBusy = false;
+      });
+
+      _showSnackBar(
+        'Perfil actualizado.',
+        backgroundColor: const Color(0xFF163928),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isBusy = false;
+      });
+      _showSnackBar('No se pudo actualizar el perfil: $error');
+    }
+  }
+
+  Future<void> _updateProfileDetails({
+    required String displayName,
+    required String phone,
+    required String photoUrl,
+  }) async {
+    final User? user = _firebaseUser;
+    final String trimmedName = displayName.trim();
+    if (user == null || trimmedName.isEmpty) {
+      return;
+    }
+
+    setState(() {
+      _isBusy = true;
+    });
+
+    try {
+      await user.updateDisplayName(trimmedName);
+      await user.reload();
+      await _repository.updateUserProfile(
+        user.uid,
+        displayName: trimmedName,
+        phone: phone.trim(),
+        photoUrl: photoUrl.trim(),
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _profilePhone = phone.trim();
+        _profilePhotoUrl = photoUrl.trim();
         _isBusy = false;
       });
 
@@ -573,7 +837,7 @@ class _CruchefAppState extends State<CruchefApp> {
       setState(() {
         _isBusy = false;
       });
-      _showSnackBar('No se pudo enviar el correo de recuperacion: $error');
+      _showSnackBar('No se pudo enviar el correo de recuperación: $error');
     }
   }
 
@@ -585,10 +849,81 @@ class _CruchefAppState extends State<CruchefApp> {
     await _bootstrap();
   }
 
+  String? _validatePaymentDetails() {
+    final String name = _paymentNameController.text.trim();
+    final String phone = _paymentPhoneController.text.trim();
+    final String reference = _paymentReferenceController.text.trim();
+    final String document = _paymentDocumentController.text.trim();
+
+    if (name.length < 3) {
+      return 'Ingresa el nombre de quien paga.';
+    }
+    if (phone.length < 7) {
+      return 'Ingresa un teléfono de contacto válido.';
+    }
+
+    switch (_selectedPaymentMethod) {
+      case PaymentMethod.cash:
+        return null;
+      case PaymentMethod.card:
+        if (document.length < 5) {
+          return 'Ingresa el documento del titular para pago con tarjeta.';
+        }
+        return null;
+      case PaymentMethod.transfer:
+        if (reference.length < 4) {
+          return 'Ingresa el número de referencia o comprobante del pago.';
+        }
+        return null;
+    }
+  }
+
+  Future<bool> _confirmOrder() async {
+    final BuildContext? context = _navigatorKey.currentContext;
+    if (context == null) {
+      return true;
+    }
+
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Confirmar pedido'),
+          content: Text(
+            'Enviarás $_cartCount platos por ${formatPrice(_cartTotal)}. '
+            'Método de pago: ${_selectedPaymentMethod.label}.',
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Revisar'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Enviar pedido'),
+            ),
+          ],
+        );
+      },
+    );
+    return confirmed ?? false;
+  }
+
   Future<void> _placeOrder() async {
     final User? user = _firebaseUser;
     final RestaurantSummary? restaurant = _selectedRestaurant;
     if (user == null || restaurant == null || _cartEntries.isEmpty) {
+      return;
+    }
+
+    final String? paymentError = _validatePaymentDetails();
+    if (paymentError != null) {
+      _showSnackBar(paymentError);
+      return;
+    }
+
+    final bool confirmed = await _confirmOrder();
+    if (!confirmed) {
       return;
     }
 
@@ -612,7 +947,12 @@ class _CruchefAppState extends State<CruchefApp> {
             categoryId: entry.dish.categoryId,
             quantity: entry.quantity,
             unitPrice: entry.dish.price,
-            notes: '',
+            notes: _orderNotesController.text.trim(),
+            paymentMethod: _selectedPaymentMethod.name,
+            paymentName: _paymentNameController.text.trim(),
+            paymentDocument: _paymentDocumentController.text.trim(),
+            paymentPhone: _paymentPhoneController.text.trim(),
+            paymentReference: _paymentReferenceController.text.trim(),
           ),
         );
       }
@@ -628,11 +968,15 @@ class _CruchefAppState extends State<CruchefApp> {
       setState(() {
         _orders = orders;
         _cart.clear();
+        _orderNotesController.clear();
+        _clearPaymentControllers();
+        _selectedPaymentMethod = PaymentMethod.cash;
         _isBusy = false;
       });
+      await _clearCartDraft();
 
       _showSnackBar(
-        'Pedido enviado correctamente.',
+        'Pedido enviado al restaurante.',
         backgroundColor: const Color(0xFF163928),
       );
     } catch (error) {
@@ -747,15 +1091,26 @@ class _CruchefAppState extends State<CruchefApp> {
                   cartEntries: _cartEntries,
                   cartCount: _cartCount,
                   cartTotal: _cartTotal,
+                  selectedPaymentMethod: _selectedPaymentMethod,
                   trackingOrders: _trackingOrders,
                   historyOrders: _historyOrders,
                   manualQrController: _manualQrController,
                   voiceController: _voiceController,
-                  quantityForDish: _quantityForDish,
+                  orderNotesController: _orderNotesController,
+                  paymentNameController: _paymentNameController,
+                  paymentDocumentController: _paymentDocumentController,
+                  paymentPhoneController: _paymentPhoneController,
+                  paymentReferenceController: _paymentReferenceController,
                   onSelectRestaurant: _selectRestaurant,
                   onSelectCategory: _selectCategory,
                   onAddToCart: _addToCart,
                   onRemoveFromCart: _removeFromCart,
+                  onCancelCart: _cancelCart,
+                  onSelectPaymentMethod: _selectPaymentMethod,
+                  onOrderNotesChanged: (String value) {
+                    _updateOrderNotes(value);
+                    _updatePaymentDetails(value);
+                  },
                   onOpenScanner: _openScanner,
                   onSubmitManualQr: _submitManualQr,
                   onRestaurantSearchChanged: _updateRestaurantSearch,
@@ -765,8 +1120,11 @@ class _CruchefAppState extends State<CruchefApp> {
                   onRefresh: _bootstrap,
                   onRefreshProfile: _refreshProfile,
                   onUpdateProfileName: _updateProfileName,
+                  onUpdateProfileDetails: _updateProfileDetails,
                   onSendPasswordReset: _sendPasswordReset,
                   onLogout: _logout,
+                  profilePhone: _profilePhone,
+                  profilePhotoUrl: _profilePhotoUrl,
                 ),
           if (_isBusy) const BusyOverlay(),
         ],
@@ -787,6 +1145,13 @@ class ProfileRowData {
 
   final String label;
   final String value;
+}
+
+class UserProfileData {
+  const UserProfileData({this.phone = '', this.photoUrl = ''});
+
+  final String phone;
+  final String photoUrl;
 }
 
 class Dish {
@@ -900,6 +1265,33 @@ class CartEntry {
   double get total => dish.price * quantity;
 }
 
+enum PaymentMethod {
+  cash,
+  card,
+  transfer;
+
+  String get label => switch (this) {
+    PaymentMethod.cash => 'Pago en caja',
+    PaymentMethod.card => 'Tarjeta',
+    PaymentMethod.transfer => 'Transferencia / Nequi',
+  };
+
+  String get description => switch (this) {
+    PaymentMethod.cash =>
+      'Pagas en efectivo cuando recibas o retires el pedido.',
+    PaymentMethod.card =>
+      'Pagas con tarjeta en el datáfono del restaurante al recibir.',
+    PaymentMethod.transfer =>
+      'Registras el comprobante de transferencia, banco o Nequi.',
+  };
+
+  IconData get icon => switch (this) {
+    PaymentMethod.cash => Icons.payments_outlined,
+    PaymentMethod.card => Icons.credit_card,
+    PaymentMethod.transfer => Icons.account_balance_outlined,
+  };
+}
+
 enum OrderStatus {
   pending,
   accepted,
@@ -937,6 +1329,8 @@ class OrderRecord {
     required this.status,
     required this.createdAt,
     required this.notes,
+    required this.paymentMethod,
+    required this.paymentStatus,
     required this.rating,
     required this.reviewText,
   });
@@ -958,6 +1352,8 @@ class OrderRecord {
   final OrderStatus status;
   final DateTime createdAt;
   final String notes;
+  final String paymentMethod;
+  final String paymentStatus;
   final double? rating;
   final String reviewText;
 
@@ -992,6 +1388,12 @@ class OrderRecord {
       ),
       createdAt: _readDateTime(json, <String>['createdAt', 'updatedAt']),
       notes: _readString(json, <String>['notes'], fallback: ''),
+      paymentMethod: _readString(json, <String>[
+        'paymentMethod',
+      ], fallback: 'cash'),
+      paymentStatus: _readString(json, <String>[
+        'paymentStatus',
+      ], fallback: 'pending'),
       rating: _readNullableDouble(json, <String>['rating']),
       reviewText: _readString(json, <String>['reviewText'], fallback: ''),
     );
@@ -1013,6 +1415,11 @@ class OrderCreatePayload {
     required this.quantity,
     required this.unitPrice,
     required this.notes,
+    required this.paymentMethod,
+    required this.paymentName,
+    required this.paymentDocument,
+    required this.paymentPhone,
+    required this.paymentReference,
   });
 
   final String ownerUid;
@@ -1028,6 +1435,11 @@ class OrderCreatePayload {
   final int quantity;
   final double unitPrice;
   final String notes;
+  final String paymentMethod;
+  final String paymentName;
+  final String paymentDocument;
+  final String paymentPhone;
+  final String paymentReference;
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
@@ -1044,6 +1456,20 @@ class OrderCreatePayload {
       'quantity': quantity,
       'unitPrice': unitPrice,
       'notes': notes,
+      'paymentMethod': paymentMethod,
+      'paymentName': paymentName,
+      'paymentDocument': paymentDocument,
+      'paymentPhone': paymentPhone,
+      'paymentReference': paymentReference,
+      'paymentDetails': <String, dynamic>{
+        'name': paymentName,
+        'document': paymentDocument,
+        'phone': paymentPhone,
+        'reference': paymentReference,
+      },
+      'serviceFee': 0,
+      'totalPrice': quantity * unitPrice,
+      'paymentStatus': paymentMethod == 'cash' ? 'pending' : 'pending_review',
     };
   }
 }
@@ -1121,7 +1547,7 @@ class CruchefRepository {
     if (customerUid != null && customerUid.isNotEmpty) {
       query = _userOrders(customerUid);
     } else if (ownerUid != null && ownerUid.isNotEmpty) {
-      query = _ownerRestaurantOrders(ownerUid);
+      query = _allOrders.where('ownerUid', isEqualTo: ownerUid);
     } else {
       query = _allOrders;
     }
@@ -1144,7 +1570,11 @@ class CruchefRepository {
   Future<OrderRecord> createOrder(OrderCreatePayload payload) async {
     final Map<String, dynamic> data = payload.toJson()
       ..['status'] = OrderStatus.pending.name
-      ..['createdAt'] = FieldValue.serverTimestamp();
+      ..['rating'] = null
+      ..['reviewText'] = ''
+      ..['deliveredAt'] = null
+      ..['createdAt'] = FieldValue.serverTimestamp()
+      ..['updatedAt'] = FieldValue.serverTimestamp();
     final DocumentReference<Map<String, dynamic>> ownerOrder =
         await _restaurantOrders(
           payload.ownerUid,
@@ -1153,10 +1583,15 @@ class CruchefRepository {
     final DocumentReference<Map<String, dynamic>> customerOrder = _userOrders(
       payload.customerUid,
     ).doc(ownerOrder.id);
-    await customerOrder.set(
-      data
-        ..['ownerOrderPath'] = ownerOrder.path
-        ..['createdAt'] = FieldValue.serverTimestamp(),
+    await customerOrder.set(<String, dynamic>{
+      ...data,
+      'ownerOrderPath': ownerOrder.path,
+      'createdAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+    await _createOwnerOrderNotification(
+      payload: payload,
+      orderId: ownerOrder.id,
     );
     return OrderRecord.fromJson(_withDocumentId(await customerOrder.get()));
   }
@@ -1196,7 +1631,7 @@ class CruchefRepository {
         return 'Te recomiendo ${dish.name} por ${formatPrice(dish.price)}.';
       }
     }
-    return 'No encontre un plato exacto en Firebase. Intenta con otro nombre.';
+    return 'No encontré un plato exacto. Intenta con otro nombre.';
   }
 
   final FirebaseFirestore _firestore;
@@ -1210,6 +1645,9 @@ class CruchefRepository {
 
   Query<Map<String, dynamic>> get _allOrders =>
       _firestore.collectionGroup('orders');
+
+  CollectionReference<Map<String, dynamic>> get _notifications =>
+      _firestore.collection('notifications');
 
   CollectionReference<Map<String, dynamic>> _restaurantDishes(
     String ownerUid,
@@ -1235,12 +1673,68 @@ class CruchefRepository {
         .collection('orders');
   }
 
-  Query<Map<String, dynamic>> _ownerRestaurantOrders(String ownerUid) {
-    return _allOrders.where('ownerUid', isEqualTo: ownerUid);
-  }
-
   CollectionReference<Map<String, dynamic>> _userOrders(String userUid) {
     return _firestore.collection('users').doc(userUid).collection('orders');
+  }
+
+  Future<UserProfileData> getUserProfile(String userUid) async {
+    final DocumentSnapshot<Map<String, dynamic>> snapshot = await _firestore
+        .collection('users')
+        .doc(userUid)
+        .get();
+    final Map<String, dynamic>? data = snapshot.data();
+    if (data == null) {
+      return const UserProfileData();
+    }
+    return UserProfileData(
+      phone: _readString(data, <String>['phone', 'telefono', 'phoneNumber']),
+      photoUrl: _readString(data, <String>[
+        'photoUrl',
+        'profilePhotoUrl',
+        'avatarUrl',
+      ]),
+    );
+  }
+
+  Future<void> updateUserProfile(
+    String userUid, {
+    required String displayName,
+    required String phone,
+    required String photoUrl,
+  }) async {
+    await _firestore.collection('users').doc(userUid).set(<String, dynamic>{
+      'displayName': displayName,
+      'name': displayName,
+      'phone': phone,
+      'photoUrl': photoUrl,
+      'profilePhotoUrl': photoUrl,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> _createOwnerOrderNotification({
+    required OrderCreatePayload payload,
+    required String orderId,
+  }) async {
+    try {
+      await _notifications.add(<String, dynamic>{
+        'recipientUid': payload.ownerUid,
+        'audience': 'owner',
+        'type': 'order-created',
+        'title': 'Nuevo pedido recibido',
+        'message':
+            '${payload.customerName} pidió ${payload.quantity} x ${payload.dishName}. Pago: ${paymentMethodLabel(payload.paymentMethod)}.',
+        'orderId': orderId,
+        'restaurantId': payload.restaurantId,
+        'restaurantName': payload.restaurantName,
+        'dishName': payload.dishName,
+        'read': false,
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    } catch (error) {
+      debugPrint('No se pudo crear la notificación del pedido: $error');
+    }
   }
 
   RestaurantSummary _restaurantFromDocument(
@@ -1303,15 +1797,15 @@ Map<String, dynamic> _withDocumentId(
 String _firebaseErrorMessage(String collection, FirebaseException error) {
   switch (error.code) {
     case 'permission-denied':
-      return 'Firebase rechazo la lectura de $collection. Revisa las reglas de Firestore para usuarios autenticados.';
+      return 'No se pudo cargar $collection. Revisa tu conexión e intenta de nuevo.';
     case 'unavailable':
-      return 'Firebase no esta disponible ahora. Revisa conexion o intenta de nuevo.';
+      return 'El servicio no está disponible ahora. Revisa tu conexión e intenta de nuevo.';
     case 'failed-precondition':
-      return 'Firestore necesita un indice o configuracion para consultar $collection.';
+      return 'No se pudo preparar la consulta de $collection. Intenta más tarde.';
     case 'not-found':
-      return 'No existe la base de datos o coleccion $collection en Firestore.';
+      return 'No hay datos disponibles para $collection en este momento.';
     default:
-      return 'No se pudo leer $collection en Firebase (${error.code}): ${error.message ?? error}';
+      return 'No se pudo cargar $collection. Intenta nuevamente.';
   }
 }
 
@@ -1407,6 +1901,19 @@ int _readInt(Map<String, dynamic> json, List<String> keys, {int fallback = 0}) {
   return fallback;
 }
 
+int _readDynamicInt(dynamic value, {int fallback = 0}) {
+  if (value is int) {
+    return value;
+  }
+  if (value is num) {
+    return value.toInt();
+  }
+  if (value is String) {
+    return int.tryParse(value) ?? fallback;
+  }
+  return fallback;
+}
+
 DateTime _readDateTime(Map<String, dynamic> json, List<String> keys) {
   for (final String key in keys) {
     final dynamic value = json[key];
@@ -1441,6 +1948,45 @@ OrderStatus parseOrderStatus(String value) {
     default:
       return OrderStatus.pending;
   }
+}
+
+PaymentMethod parsePaymentMethod(String value) {
+  switch (value.toLowerCase()) {
+    case 'card':
+      return PaymentMethod.card;
+    case 'transfer':
+      return PaymentMethod.transfer;
+    default:
+      return PaymentMethod.cash;
+  }
+}
+
+String paymentMethodLabel(String value) => parsePaymentMethod(value).label;
+
+String? restaurantKeyFromPublicMenuUrl(String value) {
+  Uri? uri = Uri.tryParse(value.trim());
+  uri ??= Uri.tryParse('https://cruchef.local/$value');
+  if (uri == null) {
+    return null;
+  }
+
+  final List<String> segments = uri.pathSegments
+      .map(Uri.decodeComponent)
+      .where((String segment) => segment.trim().isNotEmpty)
+      .toList(growable: false);
+  final int publicIndex = segments.indexOf('public');
+  if (publicIndex >= 0 &&
+      publicIndex + 3 < segments.length &&
+      segments[publicIndex + 1] == 'menu') {
+    return '${segments[publicIndex + 2]}:${segments[publicIndex + 3]}';
+  }
+
+  final int menuIndex = segments.indexOf('menu');
+  if (menuIndex >= 0 && menuIndex + 2 < segments.length) {
+    return '${segments[menuIndex + 1]}:${segments[menuIndex + 2]}';
+  }
+
+  return null;
 }
 
 IconData iconForCategory(String category) {
@@ -1486,6 +2032,86 @@ IconData iconForCategory(String category) {
   }
 }
 
+String categoryEmoji(String category) {
+  switch (category.toLowerCase()) {
+    case 'todas':
+    case 'all':
+      return '🍽️';
+    case 'burgers':
+    case 'burger':
+    case 'hamburguesas':
+      return '🍔';
+    case 'pizza':
+    case 'pizzas':
+      return '🍕';
+    case 'tacos':
+      return '🌮';
+    case 'sushi':
+      return '🍣';
+    case 'pasta':
+    case 'pastas':
+      return '🍝';
+    case 'chicken':
+    case 'pollo':
+      return '🍗';
+    case 'combo':
+    case 'combos':
+      return '🍱';
+    case 'desserts':
+    case 'dessert':
+    case 'postres':
+      return '🍰';
+    case 'drinks':
+    case 'bebidas':
+      return '🥤';
+    case 'breakfast':
+    case 'desayunos':
+      return '🥞';
+    case 'salads':
+    case 'ensaladas':
+      return '🥗';
+    case 'grill':
+    case 'parrilla':
+      return '🥩';
+    case 'seafood':
+    case 'mariscos':
+      return '🦐';
+    case 'fish':
+    case 'pescados':
+      return '🐟';
+    case 'soups':
+    case 'sopas':
+      return '🍲';
+    case 'rice':
+    case 'arroces':
+      return '🍚';
+    case 'vegan':
+    case 'vegano':
+      return '🥦';
+    case 'coffee':
+    case 'cafe':
+    case 'café':
+      return '☕';
+    case 'icecream':
+    case 'helados':
+      return '🍦';
+    case 'bakery':
+    case 'panaderia':
+    case 'panadería':
+      return '🥐';
+    case 'hotdogs':
+    case 'perros':
+      return '🌭';
+    case 'arepas':
+      return '🫓';
+    case 'healthy':
+    case 'saludable':
+      return '🥑';
+    default:
+      return '🍽️';
+  }
+}
+
 String categoryLabel(String category) {
   switch (category.toLowerCase()) {
     case 'todas':
@@ -1514,6 +2140,30 @@ String categoryLabel(String category) {
       return 'Desayunos';
     case 'salads':
       return 'Ensaladas';
+    case 'grill':
+      return 'Parrilla';
+    case 'seafood':
+      return 'Mariscos';
+    case 'fish':
+      return 'Pescados';
+    case 'soups':
+      return 'Sopas';
+    case 'rice':
+      return 'Arroces';
+    case 'vegan':
+      return 'Vegano';
+    case 'coffee':
+      return 'Café';
+    case 'icecream':
+      return 'Helados';
+    case 'bakery':
+      return 'Panadería';
+    case 'hotdogs':
+      return 'Perros';
+    case 'arepas':
+      return 'Arepas';
+    case 'healthy':
+      return 'Saludable';
   }
   if (category.isEmpty) {
     return 'General';

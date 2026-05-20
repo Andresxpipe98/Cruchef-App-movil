@@ -118,15 +118,23 @@ class UserShell extends StatefulWidget {
     required this.cartEntries,
     required this.cartCount,
     required this.cartTotal,
+    required this.selectedPaymentMethod,
     required this.trackingOrders,
     required this.historyOrders,
     required this.manualQrController,
     required this.voiceController,
-    required this.quantityForDish,
+    required this.orderNotesController,
+    required this.paymentNameController,
+    required this.paymentDocumentController,
+    required this.paymentPhoneController,
+    required this.paymentReferenceController,
     required this.onSelectRestaurant,
     required this.onSelectCategory,
     required this.onAddToCart,
     required this.onRemoveFromCart,
+    required this.onCancelCart,
+    required this.onSelectPaymentMethod,
+    required this.onOrderNotesChanged,
     required this.onOpenScanner,
     required this.onSubmitManualQr,
     required this.onRestaurantSearchChanged,
@@ -136,8 +144,11 @@ class UserShell extends StatefulWidget {
     required this.onRefresh,
     required this.onRefreshProfile,
     required this.onUpdateProfileName,
+    required this.onUpdateProfileDetails,
     required this.onSendPasswordReset,
     required this.onLogout,
+    required this.profilePhone,
+    required this.profilePhotoUrl,
   });
 
   final User user;
@@ -150,15 +161,23 @@ class UserShell extends StatefulWidget {
   final List<CartEntry> cartEntries;
   final int cartCount;
   final double cartTotal;
+  final PaymentMethod selectedPaymentMethod;
   final List<OrderRecord> trackingOrders;
   final List<OrderRecord> historyOrders;
   final TextEditingController manualQrController;
   final TextEditingController voiceController;
-  final int Function(String dishId) quantityForDish;
+  final TextEditingController orderNotesController;
+  final TextEditingController paymentNameController;
+  final TextEditingController paymentDocumentController;
+  final TextEditingController paymentPhoneController;
+  final TextEditingController paymentReferenceController;
   final ValueChanged<String> onSelectRestaurant;
   final ValueChanged<String> onSelectCategory;
   final ValueChanged<Dish> onAddToCart;
   final ValueChanged<Dish> onRemoveFromCart;
+  final VoidCallback onCancelCart;
+  final ValueChanged<PaymentMethod> onSelectPaymentMethod;
+  final ValueChanged<String> onOrderNotesChanged;
   final VoidCallback onOpenScanner;
   final VoidCallback onSubmitManualQr;
   final ValueChanged<String> onRestaurantSearchChanged;
@@ -168,8 +187,16 @@ class UserShell extends StatefulWidget {
   final Future<void> Function() onRefresh;
   final Future<void> Function() onRefreshProfile;
   final Future<void> Function(String displayName) onUpdateProfileName;
+  final Future<void> Function({
+    required String displayName,
+    required String phone,
+    required String photoUrl,
+  })
+  onUpdateProfileDetails;
   final Future<void> Function() onSendPasswordReset;
   final Future<void> Function() onLogout;
+  final String profilePhone;
+  final String profilePhotoUrl;
 
   @override
   State<UserShell> createState() => _UserShellState();
@@ -191,20 +218,37 @@ class _UserShellState extends State<UserShell> {
         dishes: widget.dishes,
         cartEntries: widget.cartEntries,
         cartCount: widget.cartCount,
-        cartTotal: widget.cartTotal,
         manualQrController: widget.manualQrController,
         voiceController: widget.voiceController,
-        quantityForDish: widget.quantityForDish,
         onSelectRestaurant: widget.onSelectRestaurant,
         onSelectCategory: widget.onSelectCategory,
         onAddToCart: widget.onAddToCart,
-        onRemoveFromCart: widget.onRemoveFromCart,
         onOpenScanner: widget.onOpenScanner,
+        onOpenCart: () {
+          setState(() {
+            _tabIndex = 1;
+          });
+        },
         onSubmitManualQr: widget.onSubmitManualQr,
         onRestaurantSearchChanged: widget.onRestaurantSearchChanged,
         onAnalyzeVoiceText: widget.onAnalyzeVoiceText,
-        onPlaceOrder: widget.onPlaceOrder,
         onRefresh: widget.onRefresh,
+      ),
+      CartPage(
+        entries: widget.cartEntries,
+        total: widget.cartTotal,
+        selectedPaymentMethod: widget.selectedPaymentMethod,
+        notesController: widget.orderNotesController,
+        paymentNameController: widget.paymentNameController,
+        paymentDocumentController: widget.paymentDocumentController,
+        paymentPhoneController: widget.paymentPhoneController,
+        paymentReferenceController: widget.paymentReferenceController,
+        onAddToCart: widget.onAddToCart,
+        onRemoveFromCart: widget.onRemoveFromCart,
+        onCancelCart: widget.onCancelCart,
+        onSelectPaymentMethod: widget.onSelectPaymentMethod,
+        onNotesChanged: widget.onOrderNotesChanged,
+        onPlaceOrder: widget.onPlaceOrder,
       ),
       TrackingPage(orders: widget.trackingOrders),
       HistoryPage(
@@ -217,8 +261,11 @@ class _UserShellState extends State<UserShell> {
         historyCount: widget.historyOrders.length,
         onRefresh: widget.onRefreshProfile,
         onUpdateProfileName: widget.onUpdateProfileName,
+        onUpdateProfileDetails: widget.onUpdateProfileDetails,
         onSendPasswordReset: widget.onSendPasswordReset,
         onLogout: widget.onLogout,
+        profilePhone: widget.profilePhone,
+        profilePhotoUrl: widget.profilePhotoUrl,
       ),
     ];
 
@@ -235,23 +282,36 @@ class _UserShellState extends State<UserShell> {
             _tabIndex = index;
           });
         },
-        destinations: const <NavigationDestination>[
-          NavigationDestination(
+        destinations: <NavigationDestination>[
+          const NavigationDestination(
             icon: Icon(Icons.restaurant_menu_outlined),
             selectedIcon: Icon(Icons.restaurant_menu),
-            label: 'Menu',
+            label: 'Menú',
           ),
           NavigationDestination(
+            icon: Badge(
+              isLabelVisible: widget.cartCount > 0,
+              label: Text('${widget.cartCount}'),
+              child: const Icon(Icons.shopping_bag_outlined),
+            ),
+            selectedIcon: Badge(
+              isLabelVisible: widget.cartCount > 0,
+              label: Text('${widget.cartCount}'),
+              child: const Icon(Icons.shopping_bag),
+            ),
+            label: 'Carrito',
+          ),
+          const NavigationDestination(
             icon: Icon(Icons.receipt_long_outlined),
             selectedIcon: Icon(Icons.receipt_long),
             label: 'Seguimiento',
           ),
-          NavigationDestination(
+          const NavigationDestination(
             icon: Icon(Icons.history_outlined),
             selectedIcon: Icon(Icons.history),
             label: 'Historial',
           ),
-          NavigationDestination(
+          const NavigationDestination(
             icon: Icon(Icons.person_outline),
             selectedIcon: Icon(Icons.person),
             label: 'Perfil',
@@ -274,19 +334,16 @@ class MenuPage extends StatelessWidget {
     required this.dishes,
     required this.cartEntries,
     required this.cartCount,
-    required this.cartTotal,
     required this.manualQrController,
     required this.voiceController,
-    required this.quantityForDish,
     required this.onSelectRestaurant,
     required this.onSelectCategory,
     required this.onAddToCart,
-    required this.onRemoveFromCart,
     required this.onOpenScanner,
+    required this.onOpenCart,
     required this.onSubmitManualQr,
     required this.onRestaurantSearchChanged,
     required this.onAnalyzeVoiceText,
-    required this.onPlaceOrder,
     required this.onRefresh,
   });
 
@@ -299,19 +356,16 @@ class MenuPage extends StatelessWidget {
   final List<Dish> dishes;
   final List<CartEntry> cartEntries;
   final int cartCount;
-  final double cartTotal;
   final TextEditingController manualQrController;
   final TextEditingController voiceController;
-  final int Function(String dishId) quantityForDish;
   final ValueChanged<String> onSelectRestaurant;
   final ValueChanged<String> onSelectCategory;
   final ValueChanged<Dish> onAddToCart;
-  final ValueChanged<Dish> onRemoveFromCart;
   final VoidCallback onOpenScanner;
+  final VoidCallback onOpenCart;
   final VoidCallback onSubmitManualQr;
   final ValueChanged<String> onRestaurantSearchChanged;
   final Future<void> Function() onAnalyzeVoiceText;
-  final Future<void> Function() onPlaceOrder;
   final Future<void> Function() onRefresh;
 
   @override
@@ -338,9 +392,11 @@ class MenuPage extends StatelessWidget {
                           const EyebrowText('Vista de usuario'),
                           const SizedBox(height: 8),
                           const Text(
-                            'Menu',
+                            'Restaurantes',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              fontSize: 38,
+                              fontSize: 32,
                               fontWeight: FontWeight.w900,
                               height: 1,
                             ),
@@ -348,7 +404,8 @@ class MenuPage extends StatelessWidget {
                           const SizedBox(height: 12),
                           Text.rich(
                             TextSpan(
-                              text: 'Estas viendo el menu de ',
+                              text:
+                                  'Elige, escanea o busca un restaurante. Ahora estás en ',
                               children: <InlineSpan>[
                                 TextSpan(
                                   text: selectedRestaurant?.name ?? 'CruChef',
@@ -369,25 +426,20 @@ class MenuPage extends StatelessWidget {
                         ],
                       ),
                     ),
+                    CartShortcutButton(count: cartCount, onTap: onOpenCart),
+                    const SizedBox(width: 10),
                     _RoundIconButton(
-                      icon: Icons.qr_code_scanner,
+                      icon: Icons.qr_code_2,
                       onTap: onOpenScanner,
                     ),
                   ],
                 ),
                 const SizedBox(height: 18),
-                StatusBanner(isOnline: firebaseOnline),
-                const SizedBox(height: 16),
-                RestaurantHero(
-                  selectedRestaurant: selectedRestaurant,
-                  cartCount: cartCount,
-                ),
-                const SizedBox(height: 16),
                 TextField(
                   controller: manualQrController,
                   textCapitalization: TextCapitalization.words,
                   decoration: InputDecoration(
-                    hintText: 'Buscar restaurante o pegar QR',
+                    hintText: 'Buscar restaurante o pegar el enlace del QR',
                     prefixIcon: const Icon(Icons.search),
                     suffixIcon: IconButton(
                       onPressed: onSubmitManualQr,
@@ -398,10 +450,23 @@ class MenuPage extends StatelessWidget {
                   onSubmitted: (_) => onSubmitManualQr(),
                 ),
                 const SizedBox(height: 14),
+                QrAccessCard(onScan: onOpenScanner),
+                const SizedBox(height: 14),
+                RestaurantSelectionPanel(
+                  restaurants: restaurants,
+                  selectedRestaurant: selectedRestaurant,
+                  onSelectRestaurant: onSelectRestaurant,
+                ),
+                const SizedBox(height: 16),
+                RestaurantHero(
+                  selectedRestaurant: selectedRestaurant,
+                  cartCount: cartCount,
+                ),
+                const SizedBox(height: 14),
                 TextField(
                   controller: voiceController,
                   decoration: InputDecoration(
-                    hintText: 'Buscar recomendacion de plato',
+                    hintText: 'Buscar recomendación de plato',
                     prefixIcon: const Icon(Icons.mic_none),
                     suffixIcon: IconButton(
                       onPressed: () {
@@ -410,34 +475,6 @@ class MenuPage extends StatelessWidget {
                       icon: const Icon(Icons.auto_awesome),
                     ),
                   ),
-                ),
-                const SizedBox(height: 16),
-                SizedBox(
-                  height: 48,
-                  child: restaurants.isEmpty
-                      ? const Center(
-                          child: Text(
-                            'No encontramos restaurantes con esa busqueda.',
-                            style: TextStyle(color: Colors.white54),
-                          ),
-                        )
-                      : ListView.separated(
-                          scrollDirection: Axis.horizontal,
-                          itemCount: restaurants.length,
-                          separatorBuilder: (BuildContext context, int index) =>
-                              const SizedBox(width: 10),
-                          itemBuilder: (BuildContext context, int index) {
-                            final RestaurantSummary restaurant =
-                                restaurants[index];
-                            final bool selected =
-                                restaurant.key == selectedRestaurant?.key;
-                            return RestaurantPill(
-                              label: restaurant.name,
-                              selected: selected,
-                              onTap: () => onSelectRestaurant(restaurant.key),
-                            );
-                          },
-                        ),
                 ),
                 const SizedBox(height: 18),
                 SizedBox(
@@ -458,51 +495,84 @@ class MenuPage extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 18),
-                if (isWide)
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Expanded(
-                        flex: 7,
-                        child: DishGrid(
-                          dishes: dishes,
-                          columns: columns,
-                          quantityForDish: quantityForDish,
-                          onAddToCart: onAddToCart,
-                          onRemoveFromCart: onRemoveFromCart,
-                        ),
-                      ),
-                      const SizedBox(width: 18),
-                      Expanded(
-                        flex: 4,
-                        child: CartPanel(
-                          entries: cartEntries,
-                          total: cartTotal,
-                          onPlaceOrder: onPlaceOrder,
-                        ),
-                      ),
-                    ],
-                  )
-                else ...<Widget>[
-                  DishGrid(
-                    dishes: dishes,
-                    columns: 1,
-                    quantityForDish: quantityForDish,
-                    onAddToCart: onAddToCart,
-                    onRemoveFromCart: onRemoveFromCart,
-                  ),
-                  const SizedBox(height: 18),
-                  CartPanel(
-                    entries: cartEntries,
-                    total: cartTotal,
-                    onPlaceOrder: onPlaceOrder,
-                  ),
-                ],
+                DishGrid(
+                  dishes: dishes,
+                  columns: isWide ? columns : 1,
+                  onAddToCart: onAddToCart,
+                ),
               ],
             ),
           ),
         );
       },
+    );
+  }
+}
+
+class CartPage extends StatelessWidget {
+  const CartPage({
+    super.key,
+    required this.entries,
+    required this.total,
+    required this.selectedPaymentMethod,
+    required this.notesController,
+    required this.paymentNameController,
+    required this.paymentDocumentController,
+    required this.paymentPhoneController,
+    required this.paymentReferenceController,
+    required this.onAddToCart,
+    required this.onRemoveFromCart,
+    required this.onCancelCart,
+    required this.onSelectPaymentMethod,
+    required this.onNotesChanged,
+    required this.onPlaceOrder,
+  });
+
+  final List<CartEntry> entries;
+  final double total;
+  final PaymentMethod selectedPaymentMethod;
+  final TextEditingController notesController;
+  final TextEditingController paymentNameController;
+  final TextEditingController paymentDocumentController;
+  final TextEditingController paymentPhoneController;
+  final TextEditingController paymentReferenceController;
+  final ValueChanged<Dish> onAddToCart;
+  final ValueChanged<Dish> onRemoveFromCart;
+  final VoidCallback onCancelCart;
+  final ValueChanged<PaymentMethod> onSelectPaymentMethod;
+  final ValueChanged<String> onNotesChanged;
+  final Future<void> Function() onPlaceOrder;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 110),
+      children: <Widget>[
+        ScreenHeader(
+          eyebrow: 'Compra en pausa',
+          title: 'Carrito',
+          lead: const Text(
+            'Revisa tu pedido, ajusta cantidades y escoge cómo vas a pagar.',
+          ),
+        ),
+        const SizedBox(height: 22),
+        CartPanel(
+          entries: entries,
+          total: total,
+          selectedPaymentMethod: selectedPaymentMethod,
+          notesController: notesController,
+          paymentNameController: paymentNameController,
+          paymentDocumentController: paymentDocumentController,
+          paymentPhoneController: paymentPhoneController,
+          paymentReferenceController: paymentReferenceController,
+          onAddToCart: onAddToCart,
+          onRemoveFromCart: onRemoveFromCart,
+          onCancelCart: onCancelCart,
+          onSelectPaymentMethod: onSelectPaymentMethod,
+          onNotesChanged: onNotesChanged,
+          onPlaceOrder: onPlaceOrder,
+        ),
+      ],
     );
   }
 }
@@ -543,7 +613,7 @@ class TrackingPage extends StatelessWidget {
           const EmptyStateCard(
             icon: Icons.receipt_long_outlined,
             title: 'No hay compras en curso',
-            subtitle: 'Cuando confirmes un pedido lo veras aqui.',
+            subtitle: 'Cuando confirmes un pedido lo verás aquí.',
           )
         else
           ...orders.map(
@@ -577,7 +647,7 @@ class HistoryPage extends StatelessWidget {
           title: 'Historial',
           lead: Text.rich(
             TextSpan(
-              text: 'Aqui aparecen tus ',
+              text: 'Aquí aparecen tus ',
               children: <InlineSpan>[
                 TextSpan(
                   text: '${orders.length}',
@@ -586,7 +656,7 @@ class HistoryPage extends StatelessWidget {
                     fontWeight: FontWeight.w800,
                   ),
                 ),
-                const TextSpan(text: ' ordenes entregadas o canceladas.'),
+                const TextSpan(text: ' órdenes entregadas o canceladas.'),
               ],
             ),
           ),
@@ -596,7 +666,7 @@ class HistoryPage extends StatelessWidget {
           const EmptyStateCard(
             icon: Icons.history_outlined,
             title: 'Sin historial',
-            subtitle: 'Tus ordenes entregadas y canceladas apareceran aqui.',
+            subtitle: 'Tus órdenes entregadas y canceladas aparecerán aquí.',
           )
         else
           ...orders.map(
@@ -621,8 +691,11 @@ class ProfilePage extends StatelessWidget {
     required this.historyCount,
     required this.onRefresh,
     required this.onUpdateProfileName,
+    required this.onUpdateProfileDetails,
     required this.onSendPasswordReset,
     required this.onLogout,
+    required this.profilePhone,
+    required this.profilePhotoUrl,
   });
 
   final User user;
@@ -630,8 +703,16 @@ class ProfilePage extends StatelessWidget {
   final int historyCount;
   final Future<void> Function() onRefresh;
   final Future<void> Function(String displayName) onUpdateProfileName;
+  final Future<void> Function({
+    required String displayName,
+    required String phone,
+    required String photoUrl,
+  })
+  onUpdateProfileDetails;
   final Future<void> Function() onSendPasswordReset;
   final Future<void> Function() onLogout;
+  final String profilePhone;
+  final String profilePhotoUrl;
 
   @override
   Widget build(BuildContext context) {
@@ -639,55 +720,54 @@ class ProfilePage extends StatelessWidget {
         ? user.displayName!.trim()
         : 'Cliente CruChef';
     final String email = user.email?.trim() ?? 'Sin correo vinculado';
-    final String phone = user.phoneNumber?.trim().isNotEmpty ?? false
-        ? user.phoneNumber!.trim()
+    final String phone = profilePhone.trim().isNotEmpty
+        ? profilePhone.trim()
         : 'No registrado';
+    final String photoUrl = profilePhotoUrl.trim();
     final String memberSince = formatProfileDate(user.metadata.creationTime);
-    final String verificationLabel = user.emailVerified
-        ? 'Correo verificado'
-        : 'Correo pendiente';
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 110),
       children: <Widget>[
         CruchefSurface(
-          padding: const EdgeInsets.all(22),
-          child: Row(
-            children: <Widget>[
-              CircleAvatar(
-                radius: 30,
-                backgroundColor: CruchefColors.redSoft,
-                child: Text(
-                  buildInitials(displayName),
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w900,
+          padding: EdgeInsets.zero,
+          child: Container(
+            padding: const EdgeInsets.all(22),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(CruchefRadii.card),
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: <Color>[Color(0x33E65151), Color(0x00121212)],
+              ),
+            ),
+            child: Row(
+              children: <Widget>[
+                ProfileAvatar(displayName: displayName, photoUrl: photoUrl),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      const EyebrowText('Mi cuenta'),
+                      const SizedBox(height: 6),
+                      Text(
+                        displayName,
+                        style: const TextStyle(
+                          fontSize: 26,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        email,
+                        style: const TextStyle(color: CruchefColors.muted),
+                      ),
+                    ],
                   ),
                 ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    const EyebrowText('Perfil'),
-                    const SizedBox(height: 6),
-                    Text(
-                      displayName,
-                      style: const TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      email,
-                      style: const TextStyle(color: CruchefColors.muted),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
         const SizedBox(height: 20),
@@ -700,24 +780,16 @@ class ProfilePage extends StatelessWidget {
             Expanded(
               child: ProfileMetric(label: 'Historial', value: '$historyCount'),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: ProfileMetric(
-                label: 'Estado',
-                value: user.emailVerified ? 'OK' : 'Pend.',
-              ),
-            ),
           ],
         ),
         const SizedBox(height: 18),
         ProfileInfoCard(
-          title: 'Informacion personal',
+          title: 'Datos de contacto',
           rows: <ProfileRowData>[
             ProfileRowData(label: 'Nombre', value: displayName),
             ProfileRowData(label: 'Correo', value: email),
-            ProfileRowData(label: 'Telefono', value: phone),
-            ProfileRowData(label: 'Verificacion', value: verificationLabel),
-            ProfileRowData(label: 'Miembro desde', value: memberSince),
+            ProfileRowData(label: 'Teléfono', value: phone),
+            ProfileRowData(label: 'Desde', value: memberSince),
           ],
         ),
         const SizedBox(height: 16),
@@ -727,39 +799,42 @@ class ProfilePage extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
               const Text(
-                'Opciones de perfil',
+                'Preferencias de cuenta',
                 style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
               ),
               const SizedBox(height: 14),
-              FilledButton.icon(
+              ProfileActionButton(
+                icon: Icons.badge_outlined,
+                title: 'Editar perfil',
+                subtitle: 'Actualiza tu nombre, teléfono y foto.',
                 onPressed: () async {
-                  final String? updatedName = await showDialog<String>(
-                    context: context,
-                    builder: (BuildContext context) =>
-                        EditProfileNameDialog(initialValue: displayName),
-                  );
-                  if (updatedName == null || updatedName.trim().isEmpty) {
+                  final ProfileEditResult? result =
+                      await showDialog<ProfileEditResult>(
+                        context: context,
+                        builder: (BuildContext context) => EditProfileDialog(
+                          initialName: displayName,
+                          initialPhone: profilePhone,
+                          initialPhotoUrl: profilePhotoUrl,
+                        ),
+                      );
+                  if (result == null || result.displayName.trim().isEmpty) {
                     return;
                   }
-                  await onUpdateProfileName(updatedName);
+                  await onUpdateProfileDetails(
+                    displayName: result.displayName,
+                    phone: result.phone,
+                    photoUrl: result.photoUrl,
+                  );
                 },
-                style: FilledButton.styleFrom(
-                  backgroundColor: CruchefColors.gold,
-                  foregroundColor: Colors.black,
-                ),
-                icon: const Icon(Icons.edit_outlined),
-                label: const Text('Editar nombre'),
               ),
               const SizedBox(height: 12),
-              FilledButton.icon(
+              ProfileActionButton(
+                icon: Icons.lock_reset,
+                title: 'Cambiar contraseña',
+                subtitle: 'Te enviaremos un correo para recuperarla.',
                 onPressed: () async {
                   await onSendPasswordReset();
                 },
-                style: FilledButton.styleFrom(
-                  backgroundColor: CruchefColors.subtleSurface,
-                ),
-                icon: const Icon(Icons.lock_reset),
-                label: const Text('Cambiar contrasena'),
               ),
             ],
           ),
@@ -769,15 +844,13 @@ class ProfilePage extends StatelessWidget {
           padding: const EdgeInsets.all(18),
           child: Column(
             children: <Widget>[
-              FilledButton.icon(
+              ProfileActionButton(
+                icon: Icons.sync,
+                title: 'Actualizar datos',
+                subtitle: 'Recarga tu perfil y tus compras recientes.',
                 onPressed: () {
                   onRefresh();
                 },
-                style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0x2952C483),
-                ),
-                icon: const Icon(Icons.sync),
-                label: const Text('Actualizar perfil'),
               ),
               const SizedBox(height: 12),
               FilledButton.icon(
@@ -790,7 +863,7 @@ class ProfilePage extends StatelessWidget {
                   foregroundColor: Colors.white,
                 ),
                 icon: const Icon(Icons.logout),
-                label: const Text('Cerrar sesion'),
+                label: const Text('Cerrar sesión'),
               ),
             ],
           ),

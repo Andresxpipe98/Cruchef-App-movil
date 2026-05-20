@@ -27,7 +27,7 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>CruChef usa la camara para leer el QR del restaurante y abrir el menu del cliente.</string>
+	<string>CruChef usa la cámara para leer el QR del restaurante y abrir el menú del cliente.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

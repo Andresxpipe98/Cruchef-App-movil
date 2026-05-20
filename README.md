@@ -1,17 +1,32 @@
-# cruchef
+# CruChef Móvil
 
-A new Flutter project.
+Aplicación Flutter para clientes de CruChef. Permite iniciar sesión, seleccionar restaurante por búsqueda o QR, agregar platos al carrito, ajustar cantidades, confirmar pedidos y hacer seguimiento.
 
-## Getting Started
+## Requisitos
 
-This project is a starting point for a Flutter application.
+- Flutter SDK compatible con Dart `^3.11.5`
+- Proyecto Firebase configurado para Android, iOS y Web
+- Archivo `android/app/google-services.json` incluido para Android
 
-A few resources to get you started if this is your first Flutter project:
+## Ejecutar
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+```bash
+flutter pub get
+flutter run
+```
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## Validar antes de subir
+
+```bash
+dart format lib test
+flutter analyze
+flutter test
+```
+
+## Estructura principal
+
+- `lib/main.dart`: estado de sesión, carrito, pedidos y conexión con Firebase.
+- `lib/screens/cruchef_screens.dart`: pantallas de usuario.
+- `lib/widgets/cruchef_widgets.dart`: componentes visuales reutilizables.
+- `lib/ui/cruchef_design.dart`: tema, colores y superficies.
+- `assets/images/logo_cruchef.png`: logo usado en la app.
