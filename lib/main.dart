@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -52,6 +53,7 @@ class _CruchefAppState extends State<CruchefApp> {
       TextEditingController();
   final TextEditingController _paymentCardCvvController =
       TextEditingController();
+  StreamSubscription<List<OrderRecord>>? _ordersSubscription;
 
   bool _isBusy = false;
   bool _firebaseOnline = true;
@@ -69,6 +71,7 @@ class _CruchefAppState extends State<CruchefApp> {
 
   @override
   void dispose() {
+    _ordersSubscription?.cancel();
     _manualQrController.dispose();
     _voiceController.dispose();
     _orderNotesController.dispose();
@@ -83,6 +86,25 @@ class _CruchefAppState extends State<CruchefApp> {
   }
 
   User? get _firebaseUser => _auth.currentUser;
+
+  void _watchOrders(String customerUid) {
+    _ordersSubscription?.cancel();
+    _ordersSubscription = _repository
+        .watchOrders(customerUid: customerUid)
+        .listen(
+          (List<OrderRecord> orders) {
+            if (!mounted) {
+              return;
+            }
+            setState(() {
+              _orders = orders;
+            });
+          },
+          onError: (Object error) {
+            debugPrint('No se pudieron sincronizar las ordenes: $error');
+          },
+        );
+  }
 
   List<RestaurantSummary> _restaurantsFromDishes(List<Dish> dishes) {
     final Map<String, List<Dish>> grouped = <String, List<Dish>>{};
@@ -513,6 +535,7 @@ class _CruchefAppState extends State<CruchefApp> {
       _selectedCategory = 'Todas';
       _isBusy = false;
     });
+    _watchOrders(user.uid);
 
     await _restoreCartDraft(resolvedRestaurants, dishes);
 
@@ -525,6 +548,8 @@ class _CruchefAppState extends State<CruchefApp> {
     setState(() {
       _isBusy = true;
     });
+    await _ordersSubscription?.cancel();
+    _ordersSubscription = null;
     await _auth.signOut();
     if (!mounted) {
       return;
@@ -1194,6 +1219,10 @@ class _CruchefAppState extends State<CruchefApp> {
       setState(() {
         _isBusy = false;
       });
+      _showSnackBar(
+        'Calificacion enviada. Gracias por tu reseña.',
+        backgroundColor: const Color(0xFF163928),
+      );
     } catch (error) {
       if (!mounted) {
         return;
@@ -1767,6 +1796,24 @@ class CruchefRepository {
     return orders;
   }
 
+  Stream<List<OrderRecord>> watchOrders({required String customerUid}) {
+    return _rootOrders
+        .where('customerUid', isEqualTo: customerUid)
+        .snapshots()
+        .map((QuerySnapshot<Map<String, dynamic>> snapshot) {
+          final List<OrderRecord> orders = snapshot.docs
+              .map((QueryDocumentSnapshot<Map<String, dynamic>> document) {
+                return OrderRecord.fromJson(_withDocumentId(document));
+              })
+              .toList(growable: false);
+          orders.sort(
+            (OrderRecord a, OrderRecord b) =>
+                b.createdAt.compareTo(a.createdAt),
+          );
+          return orders;
+        });
+  }
+
   Future<OrderRecord> createOrder(OrderCreatePayload payload) async {
     final Map<String, dynamic> data = payload.toJson()
       ..['status'] = OrderStatus.pending.name
@@ -1785,13 +1832,14 @@ class CruchefRepository {
       payload.customerUid,
     ).doc(rootOrder.id);
 
-    bool rootOrderWritten = false;
     try {
       await rootOrder.set(data);
-      rootOrderWritten = true;
     } on FirebaseException catch (error) {
       if (error.code == 'permission-denied') {
-        debugPrint('Firestore nego la escritura directa en orders: $error');
+        throw StateError(
+          'Firebase no permitio crear la orden principal. '
+          'Revisa las reglas de Firestore para permitir crear documentos en orders.',
+        );
       } else {
         rethrow;
       }
@@ -1831,23 +1879,7 @@ class CruchefRepository {
       orderId: rootOrder.id,
     );
 
-    if (rootOrderWritten) {
-      return OrderRecord.fromJson(_withDocumentId(await rootOrder.get()));
-    }
-
-    final DocumentSnapshot<Map<String, dynamic>> customerSnapshot =
-        await customerOrder.get();
-    if (customerSnapshot.exists) {
-      return OrderRecord.fromJson(_withDocumentId(customerSnapshot));
-    }
-
-    final DocumentSnapshot<Map<String, dynamic>> ownerSnapshot =
-        await ownerOrder.get();
-    if (ownerSnapshot.exists) {
-      return OrderRecord.fromJson(_withDocumentId(ownerSnapshot));
-    }
-
-    throw StateError('Firestore no permitio guardar el pedido.');
+    return OrderRecord.fromJson(_withDocumentId(await rootOrder.get()));
   }
 
   Future<List<OrderRecord>> _getOrdersFromFirestoreMirrors({
@@ -2003,10 +2035,25 @@ class CruchefRepository {
     required int rating,
     required String reviewText,
   }) async {
-    return _updateOrderEverywhere(
+    final DocumentSnapshot<Map<String, dynamic>> snapshot = await _firestore
+        .doc(id)
+        .get();
+    if (!snapshot.exists) {
+      throw StateError('La orden no existe en Firebase.');
+    }
+
+    final OrderRecord order = OrderRecord.fromJson(_withDocumentId(snapshot));
+    if (!order.canRate) {
+      throw StateError('Este pedido no se puede calificar.');
+    }
+
+    final OrderRecord updatedOrder = await _updateOrderEverywhere(
       documentPath: id,
       values: <String, dynamic>{'rating': rating, 'reviewText': reviewText},
     );
+    await _createOwnerRatingNotification(order: updatedOrder, rating: rating);
+    await _updateDishRating(order: updatedOrder, rating: rating);
+    return updatedOrder;
   }
 
   Future<String> textToDish(String text) async {
@@ -2146,8 +2193,84 @@ class CruchefRepository {
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
-    } catch (error) {
-      debugPrint('No se pudo crear la notificación del pedido: $error');
+    } on FirebaseException catch (error) {
+      if (error.code == 'permission-denied') {
+        throw StateError(
+          'Firebase creo la orden, pero no permitio crear la notificacion. '
+          'Revisa las reglas de Firestore para permitir crear documentos en notifications.',
+        );
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> _createOwnerRatingNotification({
+    required OrderRecord order,
+    required int rating,
+  }) async {
+    try {
+      await _notifications.add(<String, dynamic>{
+        'recipientUid': order.ownerUid,
+        'audience': 'owner',
+        'type': 'order-rated',
+        'title': 'Nueva calificacion recibida',
+        'message':
+            '${order.customerName} califico ${order.dishName} con $rating/5.',
+        'orderId': order.id,
+        'restaurantId': order.restaurantId,
+        'restaurantName': order.restaurantName,
+        'dishName': order.dishName,
+        'read': false,
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    } on FirebaseException catch (error) {
+      if (error.code == 'permission-denied') {
+        throw StateError(
+          'Firebase guardo la calificacion, pero no permitio notificar al propietario.',
+        );
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> _updateDishRating({
+    required OrderRecord order,
+    required int rating,
+  }) async {
+    if (order.ownerUid.isEmpty ||
+        order.restaurantId.isEmpty ||
+        order.dishId.isEmpty) {
+      return;
+    }
+
+    final DocumentReference<Map<String, dynamic>> dishRef = _restaurantDishes(
+      order.ownerUid,
+      order.restaurantId,
+    ).doc(order.dishId);
+
+    try {
+      await _firestore.runTransaction((Transaction transaction) async {
+        final DocumentSnapshot<Map<String, dynamic>> dishSnapshot =
+            await transaction.get(dishRef);
+        if (!dishSnapshot.exists) {
+          return;
+        }
+
+        final Map<String, dynamic> dishData = dishSnapshot.data() ?? {};
+        final int ratingCount = _readInt(dishData, <String>['ratingCount']) + 1;
+        final double ratingTotal =
+            _readDouble(dishData, <String>['ratingTotal']) + rating;
+        final double averageRating = ratingTotal / ratingCount;
+
+        transaction.update(dishRef, <String, dynamic>{
+          'rating': double.parse(averageRating.toStringAsFixed(1)),
+          'ratingCount': ratingCount,
+          'ratingTotal': ratingTotal,
+        });
+      });
+    } on FirebaseException catch (error) {
+      debugPrint('No se pudo actualizar la calificacion del plato: $error');
     }
   }
 

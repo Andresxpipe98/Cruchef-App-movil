@@ -631,86 +631,128 @@ class RestaurantHero extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return CruchefSurface(
-      padding: EdgeInsets.zero,
+      padding: const EdgeInsets.all(18),
+      radius: 22,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          Container(
-            padding: const EdgeInsets.all(22),
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: <Color>[Color(0x26FF4B2F), Color(0x001D1D1F)],
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  gradient: CruchefDesign.redGradient,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: const Icon(Icons.restaurant_menu, size: 24),
               ),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Text(
-                        selectedRestaurant?.name ?? 'Sin restaurantes',
-                        style: const TextStyle(
-                          fontSize: 32,
-                          fontWeight: FontWeight.w900,
-                          height: 1.05,
-                        ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      selectedRestaurant?.name ?? 'Sin restaurantes',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 26,
+                        fontWeight: FontWeight.w900,
+                        height: 1.06,
                       ),
-                      const SizedBox(height: 8),
-                      Text(
-                        selectedRestaurant == null
-                            ? 'No hay platos cargados.'
-                            : '${selectedRestaurant!.dishes.length} platos disponibles',
-                        style: const TextStyle(
-                          color: CruchefColors.muted,
-                          height: 1.55,
-                        ),
+                    ),
+                    const SizedBox(height: 7),
+                    Text(
+                      selectedRestaurant == null
+                          ? 'No hay platos cargados.'
+                          : '${selectedRestaurant!.dishes.length} platos disponibles',
+                      style: const TextStyle(
+                        color: CruchefColors.muted,
+                        fontWeight: FontWeight.w600,
+                        height: 1.35,
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 12,
-                  ),
-                  decoration: BoxDecoration(
-                    color: CruchefColors.redSoft,
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(color: const Color(0x33FF4B2F)),
-                  ),
-                  child: Row(
-                    children: <Widget>[
-                      const Icon(Icons.shopping_bag_outlined, size: 18),
-                      const SizedBox(width: 8),
-                      Text(
-                        '$cartCount',
-                        style: const TextStyle(fontWeight: FontWeight.w900),
-                      ),
-                    ],
-                  ),
+              ),
+              const SizedBox(width: 12),
+              Container(
+                constraints: const BoxConstraints(minWidth: 52),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
                 ),
-              ],
-            ),
+                decoration: BoxDecoration(
+                  color: const Color(0x1FFF4B2F),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0x36FF4B2F)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    const Icon(Icons.shopping_bag_outlined, size: 17),
+                    const SizedBox(width: 7),
+                    Text(
+                      '$cartCount',
+                      style: const TextStyle(fontWeight: FontWeight.w900),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(22, 0, 22, 20),
-            child: Wrap(
-              spacing: 12,
-              runSpacing: 12,
-              children: <Widget>[
-                InfoPill(
-                  icon: Icons.restaurant_outlined,
-                  label: selectedRestaurant?.name ?? 'Sin datos',
-                ),
-                InfoPill(
-                  icon: Icons.qr_code_2,
-                  label: selectedRestaurant?.qrCode ?? 'QR',
-                ),
-              ],
+          const SizedBox(height: 18),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: <Widget>[
+              _HeroMetaPill(
+                icon: Icons.room_service_outlined,
+                label: selectedRestaurant == null
+                    ? 'Sin menu'
+                    : '${selectedRestaurant!.dishes.length} platos',
+              ),
+              _HeroMetaPill(
+                icon: Icons.qr_code_2,
+                label: selectedRestaurant?.qrCode ?? 'QR',
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HeroMetaPill extends StatelessWidget {
+  const _HeroMetaPill({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 220),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: const Color(0x12FFFFFF),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: CruchefColors.border),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Icon(icon, size: 16, color: CruchefColors.gold),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
             ),
           ),
         ],
