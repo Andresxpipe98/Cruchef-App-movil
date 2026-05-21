@@ -6,6 +6,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -1662,6 +1663,11 @@ class CruchefRepository {
     : _firestore = firestore ?? FirebaseFirestore.instance,
       _storage = storage ?? FirebaseStorage.instance;
 
+  static const String _apiBaseUrl = String.fromEnvironment(
+    'CRUCHEF_API_BASE_URL',
+    defaultValue: 'http://10.0.2.2:3000/api',
+  );
+
   Future<bool> health() async {
     await _restaurants.limit(1).get();
     return true;
@@ -1738,7 +1744,19 @@ class CruchefRepository {
       query = query.where('status', isEqualTo: status);
     }
 
-    final QuerySnapshot<Map<String, dynamic>> snapshot = await query.get();
+    QuerySnapshot<Map<String, dynamic>> snapshot;
+    try {
+      snapshot = await query.get();
+    } on FirebaseException catch (error) {
+      if (error.code != 'permission-denied') {
+        rethrow;
+      }
+      return _getOrdersFromApi(
+        ownerUid: ownerUid,
+        customerUid: customerUid,
+        status: status,
+      );
+    }
     final List<OrderRecord> orders = snapshot.docs
         .map((QueryDocumentSnapshot<Map<String, dynamic>> document) {
           return OrderRecord.fromJson(_withDocumentId(document));
@@ -1751,6 +1769,12 @@ class CruchefRepository {
   }
 
   Future<OrderRecord> createOrder(OrderCreatePayload payload) async {
+    try {
+      return await _createOrderThroughApi(payload);
+    } catch (error) {
+      debugPrint('No se pudo crear el pedido por backend: $error');
+    }
+
     final Map<String, dynamic> data = payload.toJson()
       ..['status'] = OrderStatus.pending.name
       ..['rating'] = null
@@ -1759,33 +1783,120 @@ class CruchefRepository {
       ..['createdAt'] = FieldValue.serverTimestamp()
       ..['updatedAt'] = FieldValue.serverTimestamp();
     final DocumentReference<Map<String, dynamic>> rootOrder = _rootOrders.doc();
-    await rootOrder.set(data);
+    try {
+      await rootOrder.set(data);
+    } on FirebaseException catch (error) {
+      if (error.code == 'permission-denied') {
+        throw FirebaseException(
+          plugin: error.plugin,
+          code: error.code,
+          message:
+              'Firestore nego la escritura directa en orders. Ejecuta el backend de CruChef o configura CRUCHEF_API_BASE_URL.',
+        );
+      }
+      rethrow;
+    }
     final DocumentReference<Map<String, dynamic>> ownerOrder =
         _restaurantOrders(
           payload.ownerUid,
           payload.restaurantId,
         ).doc(rootOrder.id);
-    await ownerOrder.set(<String, dynamic>{
-      ...data,
-      'rootOrderPath': rootOrder.path,
-      'createdAt': FieldValue.serverTimestamp(),
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
+    try {
+      await ownerOrder.set(<String, dynamic>{
+        ...data,
+        'rootOrderPath': rootOrder.path,
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    } on FirebaseException catch (error) {
+      if (error.code != 'permission-denied') {
+        rethrow;
+      }
+      debugPrint('Firestore nego la copia del restaurante: ${error.message}');
+    }
     final DocumentReference<Map<String, dynamic>> customerOrder = _userOrders(
       payload.customerUid,
     ).doc(rootOrder.id);
-    await customerOrder.set(<String, dynamic>{
-      ...data,
-      'rootOrderPath': rootOrder.path,
-      'ownerOrderPath': ownerOrder.path,
-      'createdAt': FieldValue.serverTimestamp(),
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
+    try {
+      await customerOrder.set(<String, dynamic>{
+        ...data,
+        'rootOrderPath': rootOrder.path,
+        'ownerOrderPath': ownerOrder.path,
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    } on FirebaseException catch (error) {
+      if (error.code != 'permission-denied') {
+        rethrow;
+      }
+      debugPrint('Firestore nego la copia del cliente: ${error.message}');
+    }
     await _createOwnerOrderNotification(
       payload: payload,
       orderId: rootOrder.id,
     );
     return OrderRecord.fromJson(_withDocumentId(await rootOrder.get()));
+  }
+
+  Future<List<OrderRecord>> _getOrdersFromApi({
+    String? ownerUid,
+    String? customerUid,
+    String? status,
+  }) async {
+    final Map<String, String> query = <String, String>{};
+    if (ownerUid != null && ownerUid.isNotEmpty) {
+      query['ownerUid'] = ownerUid;
+    }
+    if (customerUid != null && customerUid.isNotEmpty) {
+      query['customerUid'] = customerUid;
+    }
+    if (status != null && status.isNotEmpty) {
+      query['status'] = status;
+    }
+
+    final Uri uri = Uri.parse(
+      '$_apiBaseUrl/orders',
+    ).replace(queryParameters: query.isEmpty ? null : query);
+    final http.Response response = await http.get(uri);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw StateError(
+        'Backend rechazo la consulta de pedidos (${response.statusCode}).',
+      );
+    }
+
+    final Object? decoded = jsonDecode(response.body);
+    if (decoded is! List<dynamic>) {
+      return <OrderRecord>[];
+    }
+
+    final List<OrderRecord> orders = decoded
+        .whereType<Map<String, dynamic>>()
+        .map(OrderRecord.fromJson)
+        .toList(growable: false);
+    orders.sort(
+      (OrderRecord a, OrderRecord b) => b.createdAt.compareTo(a.createdAt),
+    );
+    return orders;
+  }
+
+  Future<OrderRecord> _createOrderThroughApi(OrderCreatePayload payload) async {
+    final Uri uri = Uri.parse('$_apiBaseUrl/orders');
+    final http.Response response = await http.post(
+      uri,
+      headers: const <String, String>{'Content-Type': 'application/json'},
+      body: jsonEncode(payload.toJson()),
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw StateError(
+        'Backend rechazo el pedido (${response.statusCode}): ${response.body}',
+      );
+    }
+
+    final Object? decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw StateError('El backend respondio un pedido invalido.');
+    }
+    return OrderRecord.fromJson(decoded);
   }
 
   Future<OrderRecord> updateOrderStatus({
@@ -2147,6 +2258,18 @@ DateTime _readDateTime(Map<String, dynamic> json, List<String> keys) {
     }
     if (value is num) {
       return DateTime.fromMillisecondsSinceEpoch(value.toInt()).toLocal();
+    }
+    if (value is Map<String, dynamic>) {
+      final int seconds = _readInt(value, <String>['seconds', '_seconds']);
+      final int nanoseconds = _readInt(value, <String>[
+        'nanoseconds',
+        '_nanoseconds',
+      ]);
+      if (seconds > 0) {
+        return DateTime.fromMillisecondsSinceEpoch(
+          (seconds * 1000) + (nanoseconds ~/ 1000000),
+        ).toLocal();
+      }
     }
   }
   return DateTime.now();
