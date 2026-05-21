@@ -1,23 +1,25 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 class CruchefColors {
   const CruchefColors._();
 
-  static const Color page = Color(0xFF121212);
-  static const Color pageEnd = Color(0xFF171717);
-  static const Color surface = Color(0xFF1E1E1E);
+  static const Color page = Color(0xFF111111);
+  static const Color pageEnd = Color(0xFF161616);
+  static const Color surface = Color(0xCC1D1D1F);
   static const Color sidebar = Color(0xFF2A2A2D);
-  static const Color subtleSurface = Color(0x0AFFFFFF);
-  static const Color border = Color(0x14FFFFFF);
-  static const Color strongBorder = Color(0x1FFFFFFF);
-  static const Color text = Color(0xFFFFFFFF);
-  static const Color muted = Color(0xFFBDBDBD);
-  static const Color dim = Color(0xFF828282);
-  static const Color red = Color(0xFFE65151);
-  static const Color redDark = Color(0xFFB73D3D);
-  static const Color redSoft = Color(0x1FE65151);
-  static const Color gold = Color(0xFFFFD166);
+  static const Color subtleSurface = Color(0x14FFFFFF);
+  static const Color border = Color(0x1FFFFFFF);
+  static const Color strongBorder = Color(0x38FFFFFF);
+  static const Color text = Color(0xFFF5F5F5);
+  static const Color muted = Color(0xFFA7A7A7);
+  static const Color dim = Color(0xFF777777);
+  static const Color red = Color(0xFFFF4B2F);
+  static const Color redDark = Color(0xFFD83B27);
+  static const Color redSoft = Color(0x2EFF4B2F);
+  static const Color gold = Color(0xFFF5B942);
   static const Color green = Color(0xFFA7EFC1);
   static const Color greenSoft = Color(0x1F52C483);
   static const Color error = Color(0xFFFFB0B0);
@@ -45,9 +47,14 @@ class CruchefDesign {
   const CruchefDesign._();
 
   static LinearGradient get pageGradient => const LinearGradient(
-    begin: Alignment.topCenter,
-    end: Alignment.bottomCenter,
-    colors: <Color>[CruchefColors.page, CruchefColors.pageEnd],
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+    colors: <Color>[
+      CruchefColors.page,
+      Color(0xFF171717),
+      CruchefColors.pageEnd,
+    ],
+    stops: <double>[0, 0.55, 1],
   );
 
   static LinearGradient get redGradient => const LinearGradient(
@@ -111,8 +118,8 @@ class CruchefDesign {
         labelStyle: TextStyle(fontWeight: FontWeight.w700),
       ),
       navigationBarTheme: NavigationBarThemeData(
-        height: 76,
-        backgroundColor: CruchefColors.surface,
+        height: 78,
+        backgroundColor: const Color(0xF21D1D1F),
         indicatorColor: CruchefColors.redSoft,
         labelTextStyle: WidgetStateProperty.all(
           const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
@@ -132,6 +139,7 @@ class CruchefDesign {
           disabledBackgroundColor: CruchefColors.red.withValues(alpha: 0.45),
           disabledForegroundColor: CruchefColors.text.withValues(alpha: 0.72),
           minimumSize: const Size(0, 50),
+          elevation: 0,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(CruchefRadii.field),
           ),
@@ -142,6 +150,7 @@ class CruchefDesign {
         style: OutlinedButton.styleFrom(
           foregroundColor: CruchefColors.text,
           side: const BorderSide(color: CruchefColors.strongBorder),
+          minimumSize: const Size(0, 48),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(CruchefRadii.field),
           ),
@@ -169,9 +178,13 @@ class CruchefPageBackground extends StatelessWidget {
       decoration: const BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topRight,
-          end: Alignment.bottomCenter,
-          colors: <Color>[Color(0x1FE65151), Color(0x00121212)],
-          stops: <double>[0, 0.24],
+          end: Alignment.bottomLeft,
+          colors: <Color>[
+            Color(0x33FF4B2F),
+            Color(0x18F5B942),
+            Color(0x00111111),
+          ],
+          stops: <double>[0, 0.42, 1],
         ),
       ),
       child: DecoratedBox(
@@ -196,21 +209,27 @@ class CruchefSurface extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: padding,
-      decoration: BoxDecoration(
-        color: CruchefColors.surface,
-        borderRadius: BorderRadius.circular(radius),
-        border: Border.all(color: CruchefColors.border),
-        boxShadow: const <BoxShadow>[
-          BoxShadow(
-            color: Color(0x38000000),
-            blurRadius: 38,
-            offset: Offset(0, 22),
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(radius),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+        child: Container(
+          padding: padding,
+          decoration: BoxDecoration(
+            color: CruchefColors.surface,
+            borderRadius: BorderRadius.circular(radius),
+            border: Border.all(color: CruchefColors.border),
+            boxShadow: const <BoxShadow>[
+              BoxShadow(
+                color: Color(0x52000000),
+                blurRadius: 34,
+                offset: Offset(0, 18),
+              ),
+            ],
           ),
-        ],
+          child: child,
+        ),
       ),
-      child: child,
     );
   }
 }

@@ -128,6 +128,9 @@ class UserShell extends StatefulWidget {
     required this.paymentDocumentController,
     required this.paymentPhoneController,
     required this.paymentReferenceController,
+    required this.paymentCardNumberController,
+    required this.paymentCardExpiryController,
+    required this.paymentCardCvvController,
     required this.onSelectRestaurant,
     required this.onSelectCategory,
     required this.onAddToCart,
@@ -145,6 +148,7 @@ class UserShell extends StatefulWidget {
     required this.onRefreshProfile,
     required this.onUpdateProfileName,
     required this.onUpdateProfileDetails,
+    required this.onPickProfilePhoto,
     required this.onSendPasswordReset,
     required this.onLogout,
     required this.profilePhone,
@@ -171,6 +175,9 @@ class UserShell extends StatefulWidget {
   final TextEditingController paymentDocumentController;
   final TextEditingController paymentPhoneController;
   final TextEditingController paymentReferenceController;
+  final TextEditingController paymentCardNumberController;
+  final TextEditingController paymentCardExpiryController;
+  final TextEditingController paymentCardCvvController;
   final ValueChanged<String> onSelectRestaurant;
   final ValueChanged<String> onSelectCategory;
   final ValueChanged<Dish> onAddToCart;
@@ -193,6 +200,7 @@ class UserShell extends StatefulWidget {
     required String photoUrl,
   })
   onUpdateProfileDetails;
+  final Future<String?> Function() onPickProfilePhoto;
   final Future<void> Function() onSendPasswordReset;
   final Future<void> Function() onLogout;
   final String profilePhone;
@@ -243,6 +251,9 @@ class _UserShellState extends State<UserShell> {
         paymentDocumentController: widget.paymentDocumentController,
         paymentPhoneController: widget.paymentPhoneController,
         paymentReferenceController: widget.paymentReferenceController,
+        paymentCardNumberController: widget.paymentCardNumberController,
+        paymentCardExpiryController: widget.paymentCardExpiryController,
+        paymentCardCvvController: widget.paymentCardCvvController,
         onAddToCart: widget.onAddToCart,
         onRemoveFromCart: widget.onRemoveFromCart,
         onCancelCart: widget.onCancelCart,
@@ -262,6 +273,7 @@ class _UserShellState extends State<UserShell> {
         onRefresh: widget.onRefreshProfile,
         onUpdateProfileName: widget.onUpdateProfileName,
         onUpdateProfileDetails: widget.onUpdateProfileDetails,
+        onPickProfilePhoto: widget.onPickProfilePhoto,
         onSendPasswordReset: widget.onSendPasswordReset,
         onLogout: widget.onLogout,
         profilePhone: widget.profilePhone,
@@ -270,8 +282,8 @@ class _UserShellState extends State<UserShell> {
     ];
 
     return Scaffold(
-      body: SafeArea(
-        child: CruchefPageBackground(
+      body: CruchefPageBackground(
+        child: SafeArea(
           child: IndexedStack(index: _tabIndex, children: pages),
         ),
       ),
@@ -520,6 +532,9 @@ class CartPage extends StatelessWidget {
     required this.paymentDocumentController,
     required this.paymentPhoneController,
     required this.paymentReferenceController,
+    required this.paymentCardNumberController,
+    required this.paymentCardExpiryController,
+    required this.paymentCardCvvController,
     required this.onAddToCart,
     required this.onRemoveFromCart,
     required this.onCancelCart,
@@ -536,6 +551,9 @@ class CartPage extends StatelessWidget {
   final TextEditingController paymentDocumentController;
   final TextEditingController paymentPhoneController;
   final TextEditingController paymentReferenceController;
+  final TextEditingController paymentCardNumberController;
+  final TextEditingController paymentCardExpiryController;
+  final TextEditingController paymentCardCvvController;
   final ValueChanged<Dish> onAddToCart;
   final ValueChanged<Dish> onRemoveFromCart;
   final VoidCallback onCancelCart;
@@ -565,6 +583,9 @@ class CartPage extends StatelessWidget {
           paymentDocumentController: paymentDocumentController,
           paymentPhoneController: paymentPhoneController,
           paymentReferenceController: paymentReferenceController,
+          paymentCardNumberController: paymentCardNumberController,
+          paymentCardExpiryController: paymentCardExpiryController,
+          paymentCardCvvController: paymentCardCvvController,
           onAddToCart: onAddToCart,
           onRemoveFromCart: onRemoveFromCart,
           onCancelCart: onCancelCart,
@@ -692,6 +713,7 @@ class ProfilePage extends StatelessWidget {
     required this.onRefresh,
     required this.onUpdateProfileName,
     required this.onUpdateProfileDetails,
+    required this.onPickProfilePhoto,
     required this.onSendPasswordReset,
     required this.onLogout,
     required this.profilePhone,
@@ -709,6 +731,7 @@ class ProfilePage extends StatelessWidget {
     required String photoUrl,
   })
   onUpdateProfileDetails;
+  final Future<String?> Function() onPickProfilePhoto;
   final Future<void> Function() onSendPasswordReset;
   final Future<void> Function() onLogout;
   final String profilePhone;
@@ -815,6 +838,7 @@ class ProfilePage extends StatelessWidget {
                           initialName: displayName,
                           initialPhone: profilePhone,
                           initialPhotoUrl: profilePhotoUrl,
+                          onPickPhoto: onPickProfilePhoto,
                         ),
                       );
                   if (result == null || result.displayName.trim().isEmpty) {

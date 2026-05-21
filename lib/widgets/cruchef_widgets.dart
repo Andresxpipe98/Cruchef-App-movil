@@ -631,59 +631,87 @@ class RestaurantHero extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return CruchefSurface(
-      padding: const EdgeInsets.all(23),
+      padding: EdgeInsets.zero,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Text(
-                      selectedRestaurant?.name ?? 'Sin restaurantes',
-                      style: const TextStyle(
-                        fontSize: 32,
-                        fontWeight: FontWeight.w900,
-                        height: 1.05,
+          Container(
+            padding: const EdgeInsets.all(22),
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: <Color>[Color(0x26FF4B2F), Color(0x001D1D1F)],
+              ),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        selectedRestaurant?.name ?? 'Sin restaurantes',
+                        style: const TextStyle(
+                          fontSize: 32,
+                          fontWeight: FontWeight.w900,
+                          height: 1.05,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      selectedRestaurant == null
-                          ? 'No hay platos cargados.'
-                          : '${selectedRestaurant!.dishes.length} platos disponibles',
-                      style: const TextStyle(
-                        color: CruchefColors.muted,
-                        height: 1.55,
+                      const SizedBox(height: 8),
+                      Text(
+                        selectedRestaurant == null
+                            ? 'No hay platos cargados.'
+                            : '${selectedRestaurant!.dishes.length} platos disponibles',
+                        style: const TextStyle(
+                          color: CruchefColors.muted,
+                          height: 1.55,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-              FilledButton.tonalIcon(
-                onPressed: null,
-                icon: const Icon(Icons.shopping_bag_outlined),
-                label: Text('$cartCount'),
-              ),
-            ],
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
+                  decoration: BoxDecoration(
+                    color: CruchefColors.redSoft,
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: const Color(0x33FF4B2F)),
+                  ),
+                  child: Row(
+                    children: <Widget>[
+                      const Icon(Icons.shopping_bag_outlined, size: 18),
+                      const SizedBox(width: 8),
+                      Text(
+                        '$cartCount',
+                        style: const TextStyle(fontWeight: FontWeight.w900),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
-          const SizedBox(height: 16),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: <Widget>[
-              InfoPill(
-                icon: Icons.restaurant_outlined,
-                label: selectedRestaurant?.name ?? 'Sin datos',
-              ),
-              InfoPill(
-                icon: Icons.qr_code_2,
-                label: selectedRestaurant?.qrCode ?? 'QR',
-              ),
-            ],
+          Padding(
+            padding: const EdgeInsets.fromLTRB(22, 0, 22, 20),
+            child: Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: <Widget>[
+                InfoPill(
+                  icon: Icons.restaurant_outlined,
+                  label: selectedRestaurant?.name ?? 'Sin datos',
+                ),
+                InfoPill(
+                  icon: Icons.qr_code_2,
+                  label: selectedRestaurant?.qrCode ?? 'QR',
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -1121,7 +1149,7 @@ class DishGrid extends StatelessWidget {
       ),
       itemBuilder: (BuildContext context, int index) {
         final Dish dish = dishes[index];
-        return DishCard(dish: dish, onAdd: () => onAddToCart(dish));
+        return PolishedDishCard(dish: dish, onAdd: () => onAddToCart(dish));
       },
     );
   }
@@ -1262,6 +1290,144 @@ class DishImageBadge extends StatelessWidget {
   }
 }
 
+class PolishedDishCard extends StatelessWidget {
+  const PolishedDishCard({super.key, required this.dish, required this.onAdd});
+
+  final Dish dish;
+  final VoidCallback onAdd;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: SizedBox(
+        height: 306,
+        child: CruchefSurface(
+          padding: const EdgeInsets.all(14),
+          radius: 22,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              _PolishedDishImage(dish: dish),
+              const SizedBox(height: 12),
+              Text(
+                dish.name,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 21,
+                  fontWeight: FontWeight.w900,
+                  height: 1.08,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: <Widget>[
+                  Expanded(
+                    child: Text(
+                      formatPrice(dish.price),
+                      style: const TextStyle(
+                        color: CruchefColors.gold,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0x1FF5B942),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      dish.rating > 0
+                          ? '★ ${dish.rating.toStringAsFixed(1)}'
+                          : 'Nuevo',
+                      style: TextStyle(
+                        color: dish.rating > 0
+                            ? CruchefColors.gold
+                            : CruchefColors.muted,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                dish.restaurantName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: CruchefColors.muted,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const Spacer(),
+              FilledButton.icon(
+                onPressed: onAdd,
+                icon: const Icon(Icons.add_shopping_cart),
+                label: const Text('Agregar'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PolishedDishImage extends StatelessWidget {
+  const _PolishedDishImage({required this.dish});
+
+  final Dish dish;
+
+  @override
+  Widget build(BuildContext context) {
+    final Widget fallback = Container(
+      height: 112,
+      decoration: BoxDecoration(
+        color: CruchefColors.subtleSurface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: CruchefColors.border),
+      ),
+      child: Center(
+        child: Text(
+          categoryEmoji(dish.categoryId),
+          style: const TextStyle(fontSize: 46),
+        ),
+      ),
+    );
+
+    if (dish.imageUrl.isEmpty) {
+      return fallback;
+    }
+
+    return Container(
+      height: 112,
+      decoration: BoxDecoration(
+        color: CruchefColors.subtleSurface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: CruchefColors.border),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Image.network(
+        dish.imageUrl,
+        width: double.infinity,
+        fit: BoxFit.contain,
+        errorBuilder:
+            (BuildContext context, Object error, StackTrace? stackTrace) =>
+                fallback,
+      ),
+    );
+  }
+}
+
 class CartPanel extends StatelessWidget {
   const CartPanel({
     super.key,
@@ -1273,6 +1439,9 @@ class CartPanel extends StatelessWidget {
     required this.paymentDocumentController,
     required this.paymentPhoneController,
     required this.paymentReferenceController,
+    required this.paymentCardNumberController,
+    required this.paymentCardExpiryController,
+    required this.paymentCardCvvController,
     required this.onAddToCart,
     required this.onRemoveFromCart,
     required this.onCancelCart,
@@ -1289,6 +1458,9 @@ class CartPanel extends StatelessWidget {
   final TextEditingController paymentDocumentController;
   final TextEditingController paymentPhoneController;
   final TextEditingController paymentReferenceController;
+  final TextEditingController paymentCardNumberController;
+  final TextEditingController paymentCardExpiryController;
+  final TextEditingController paymentCardCvvController;
   final ValueChanged<Dish> onAddToCart;
   final ValueChanged<Dish> onRemoveFromCart;
   final VoidCallback onCancelCart;
@@ -1372,6 +1544,9 @@ class CartPanel extends StatelessWidget {
             paymentDocumentController: paymentDocumentController,
             paymentPhoneController: paymentPhoneController,
             paymentReferenceController: paymentReferenceController,
+            paymentCardNumberController: paymentCardNumberController,
+            paymentCardExpiryController: paymentCardExpiryController,
+            paymentCardCvvController: paymentCardCvvController,
             onChanged: onNotesChanged,
           ),
           const Divider(height: 28),
@@ -1529,6 +1704,9 @@ class PaymentDetailsForm extends StatelessWidget {
     required this.paymentDocumentController,
     required this.paymentPhoneController,
     required this.paymentReferenceController,
+    required this.paymentCardNumberController,
+    required this.paymentCardExpiryController,
+    required this.paymentCardCvvController,
     required this.onChanged,
   });
 
@@ -1537,6 +1715,9 @@ class PaymentDetailsForm extends StatelessWidget {
   final TextEditingController paymentDocumentController;
   final TextEditingController paymentPhoneController;
   final TextEditingController paymentReferenceController;
+  final TextEditingController paymentCardNumberController;
+  final TextEditingController paymentCardExpiryController;
+  final TextEditingController paymentCardCvvController;
   final ValueChanged<String> onChanged;
 
   @override
@@ -1556,9 +1737,11 @@ class PaymentDetailsForm extends StatelessWidget {
         TextField(
           controller: paymentPhoneController,
           keyboardType: TextInputType.phone,
-          decoration: const InputDecoration(
-            labelText: 'Teléfono de contacto',
-            prefixIcon: Icon(Icons.phone_outlined),
+          decoration: InputDecoration(
+            labelText: selectedPaymentMethod == PaymentMethod.transfer
+                ? 'Numero Nequi o telefono de contacto'
+                : 'Telefono de contacto',
+            prefixIcon: const Icon(Icons.phone_outlined),
           ),
           onChanged: onChanged,
         ),
@@ -1573,13 +1756,55 @@ class PaymentDetailsForm extends StatelessWidget {
             ),
             onChanged: onChanged,
           ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: paymentCardNumberController,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              labelText: 'Numero de tarjeta',
+              hintText: '1234 5678 9012 3456',
+              prefixIcon: Icon(Icons.credit_card),
+            ),
+            onChanged: onChanged,
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: TextField(
+                  controller: paymentCardExpiryController,
+                  keyboardType: TextInputType.datetime,
+                  decoration: const InputDecoration(
+                    labelText: 'Vencimiento',
+                    hintText: 'MM/AA',
+                    prefixIcon: Icon(Icons.calendar_month_outlined),
+                  ),
+                  onChanged: onChanged,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextField(
+                  controller: paymentCardCvvController,
+                  keyboardType: TextInputType.number,
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                    labelText: 'CVV',
+                    prefixIcon: Icon(Icons.lock_outline),
+                  ),
+                  onChanged: onChanged,
+                ),
+              ),
+            ],
+          ),
         ],
         if (selectedPaymentMethod == PaymentMethod.transfer) ...<Widget>[
           const SizedBox(height: 12),
           TextField(
             controller: paymentReferenceController,
             decoration: InputDecoration(
-              labelText: 'Referencia de transferencia o Nequi',
+              labelText: 'Referencia o comprobante Nequi',
+              hintText: 'Numero de aprobacion o comprobante',
               prefixIcon: const Icon(Icons.receipt_long_outlined),
             ),
             onChanged: onChanged,
@@ -1681,7 +1906,7 @@ class TrackingOrderCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      '${order.id} - ${formatOrderTime(order.createdAt)}',
+                      formatOrderTime(order.createdAt),
                       style: const TextStyle(color: Colors.white54),
                     ),
                   ],
@@ -2069,36 +2294,66 @@ class OrderSteps extends StatelessWidget {
     ];
     final int activeIndex = steps.indexOf(status);
 
-    return Row(
-      children: List<Widget>.generate(steps.length, (int index) {
-        final bool active = activeIndex >= index;
-        return Expanded(
-          child: Container(
-            margin: EdgeInsets.only(right: index == steps.length - 1 ? 0 : 8),
-            child: Column(
-              children: <Widget>[
-                Container(
-                  height: 8,
-                  decoration: BoxDecoration(
-                    color: active ? const Color(0xFFE34B4B) : Colors.white10,
-                    borderRadius: BorderRadius.circular(999),
+    return Column(
+      children: <Widget>[
+        Row(
+          children: List<Widget>.generate(steps.length, (int index) {
+            final bool active = activeIndex >= index;
+            return Expanded(
+              child: Container(
+                height: 8,
+                margin: EdgeInsets.only(
+                  right: index == steps.length - 1 ? 0 : 8,
+                ),
+                decoration: BoxDecoration(
+                  gradient: active ? CruchefDesign.redGradient : null,
+                  color: active ? null : Colors.white10,
+                  borderRadius: BorderRadius.circular(999),
+                  boxShadow: active
+                      ? const <BoxShadow>[
+                          BoxShadow(
+                            color: Color(0x33FF4B2F),
+                            blurRadius: 10,
+                            offset: Offset(0, 4),
+                          ),
+                        ]
+                      : null,
+                ),
+              ),
+            );
+          }),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: List<Widget>.generate(steps.length, (int index) {
+            final bool active = activeIndex >= index;
+            return Expanded(
+              child: Container(
+                height: 18,
+                margin: EdgeInsets.only(
+                  right: index == steps.length - 1 ? 0 : 8,
+                ),
+                alignment: Alignment.topCenter,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    steps[index].label,
+                    maxLines: 1,
+                    textAlign: TextAlign.center,
+                    softWrap: false,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: active ? Colors.white : Colors.white38,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  steps[index].label,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: active ? Colors.white : Colors.white38,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      }),
+              ),
+            );
+          }),
+        ),
+      ],
     );
   }
 }
@@ -2405,6 +2660,63 @@ class _RatingDialogState extends State<RatingDialog> {
   }
 }
 
+class CruchefSnackBarContent extends StatelessWidget {
+  const CruchefSnackBarContent({
+    super.key,
+    required this.message,
+    required this.backgroundColor,
+  });
+
+  final String message;
+  final Color backgroundColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final bool isSuccess = backgroundColor == const Color(0xFF163928);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: isSuccess ? const Color(0xFF163928) : const Color(0xFF4C1D1D),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: isSuccess ? const Color(0x6652C483) : const Color(0x66E65151),
+        ),
+        boxShadow: const <BoxShadow>[
+          BoxShadow(
+            color: Color(0x66000000),
+            blurRadius: 24,
+            offset: Offset(0, 12),
+          ),
+        ],
+      ),
+      child: Row(
+        children: <Widget>[
+          CircleAvatar(
+            radius: 18,
+            backgroundColor: Colors.white10,
+            child: Icon(
+              isSuccess ? Icons.check_circle_outline : Icons.error_outline,
+              color: isSuccess ? CruchefColors.green : CruchefColors.error,
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+                height: 1.25,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class BusyOverlay extends StatelessWidget {
   const BusyOverlay({super.key});
 
@@ -2485,11 +2797,13 @@ class EditProfileDialog extends StatefulWidget {
     required this.initialName,
     required this.initialPhone,
     required this.initialPhotoUrl,
+    required this.onPickPhoto,
   });
 
   final String initialName;
   final String initialPhone;
   final String initialPhotoUrl;
+  final Future<String?> Function() onPickPhoto;
 
   @override
   State<EditProfileDialog> createState() => _EditProfileDialogState();
@@ -2505,6 +2819,13 @@ class _EditProfileDialogState extends State<EditProfileDialog> {
   late final TextEditingController _photoController = TextEditingController(
     text: widget.initialPhotoUrl,
   );
+  String _photoUrl = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _photoUrl = widget.initialPhotoUrl;
+  }
 
   @override
   void dispose() {
@@ -2535,12 +2856,37 @@ class _EditProfileDialogState extends State<EditProfileDialog> {
               decoration: const InputDecoration(labelText: 'Teléfono'),
             ),
             const SizedBox(height: 12),
-            TextField(
-              controller: _photoController,
-              keyboardType: TextInputType.url,
-              decoration: const InputDecoration(
-                labelText: 'URL de foto de perfil',
-                hintText: 'https://...',
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: CruchefColors.subtleSurface,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: CruchefColors.strongBorder),
+              ),
+              child: Row(
+                children: <Widget>[
+                  ProfileAvatar(
+                    displayName: _nameController.text,
+                    photoUrl: _photoUrl,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: () async {
+                        final String? photoUrl = await widget.onPickPhoto();
+                        if (photoUrl == null || !mounted) {
+                          return;
+                        }
+                        setState(() {
+                          _photoUrl = photoUrl;
+                          _photoController.text = photoUrl;
+                        });
+                      },
+                      icon: const Icon(Icons.photo_camera_outlined),
+                      label: const Text('Subir foto'),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],

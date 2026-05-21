@@ -5,6 +5,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -44,6 +46,12 @@ class _CruchefAppState extends State<CruchefApp> {
   final TextEditingController _paymentPhoneController = TextEditingController();
   final TextEditingController _paymentReferenceController =
       TextEditingController();
+  final TextEditingController _paymentCardNumberController =
+      TextEditingController();
+  final TextEditingController _paymentCardExpiryController =
+      TextEditingController();
+  final TextEditingController _paymentCardCvvController =
+      TextEditingController();
 
   bool _isBusy = false;
   bool _firebaseOnline = true;
@@ -68,6 +76,9 @@ class _CruchefAppState extends State<CruchefApp> {
     _paymentDocumentController.dispose();
     _paymentPhoneController.dispose();
     _paymentReferenceController.dispose();
+    _paymentCardNumberController.dispose();
+    _paymentCardExpiryController.dispose();
+    _paymentCardCvvController.dispose();
     super.dispose();
   }
 
@@ -236,6 +247,8 @@ class _CruchefAppState extends State<CruchefApp> {
       'paymentDocument': _paymentDocumentController.text.trim(),
       'paymentPhone': _paymentPhoneController.text.trim(),
       'paymentReference': _paymentReferenceController.text.trim(),
+      'paymentCardNumber': _paymentCardNumberController.text.trim(),
+      'paymentCardExpiry': _paymentCardExpiryController.text.trim(),
       'notes': _orderNotesController.text.trim(),
       'cart': _cart,
       'updatedAt': DateTime.now().toIso8601String(),
@@ -322,6 +335,12 @@ class _CruchefAppState extends State<CruchefApp> {
         _paymentReferenceController.text = _readString(decoded, <String>[
           'paymentReference',
         ]);
+        _paymentCardNumberController.text = _readString(decoded, <String>[
+          'paymentCardNumber',
+        ]);
+        _paymentCardExpiryController.text = _readString(decoded, <String>[
+          'paymentCardExpiry',
+        ]);
         _cart
           ..clear()
           ..addAll(restoredCart);
@@ -352,7 +371,17 @@ class _CruchefAppState extends State<CruchefApp> {
     messenger
       ..hideCurrentSnackBar()
       ..showSnackBar(
-        SnackBar(backgroundColor: backgroundColor, content: Text(message)),
+        SnackBar(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.fromLTRB(16, 0, 16, 88),
+          duration: const Duration(seconds: 3),
+          content: CruchefSnackBarContent(
+            message: message,
+            backgroundColor: backgroundColor,
+          ),
+        ),
       );
   }
 
@@ -560,6 +589,9 @@ class _CruchefAppState extends State<CruchefApp> {
     _paymentDocumentController.clear();
     _paymentPhoneController.clear();
     _paymentReferenceController.clear();
+    _paymentCardNumberController.clear();
+    _paymentCardExpiryController.clear();
+    _paymentCardCvvController.clear();
   }
 
   void _cancelCart() {
@@ -584,10 +616,17 @@ class _CruchefAppState extends State<CruchefApp> {
         '${dish.ownerUid}:${dish.restaurantId}' != _selectedRestaurantKey) {
       return;
     }
+    final bool isNewDish = !_cart.containsKey(dish.id);
     setState(() {
       _cart.update(dish.id, (int value) => value + 1, ifAbsent: () => 1);
     });
     _saveCartDraft();
+    if (isNewDish) {
+      _showSnackBar(
+        '${dish.name} agregado al carrito.',
+        backgroundColor: const Color(0xFF163928),
+      );
+    }
   }
 
   void _removeFromCart(Dish dish) {
@@ -803,6 +842,62 @@ class _CruchefAppState extends State<CruchefApp> {
     }
   }
 
+  Future<String?> _pickAndUploadProfilePhoto() async {
+    final User? user = _firebaseUser;
+    if (user == null) {
+      return null;
+    }
+
+    try {
+      final XFile? image = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 82,
+        maxWidth: 1200,
+      );
+      if (image == null) {
+        return null;
+      }
+
+      setState(() {
+        _isBusy = true;
+      });
+
+      final Uint8List bytes = await image.readAsBytes();
+      final String photoUrl = await _repository.uploadUserProfilePhoto(
+        userUid: user.uid,
+        bytes: bytes,
+        fileName: image.name,
+        mimeType: image.mimeType,
+      );
+      await user.updatePhotoURL(photoUrl);
+      await user.reload();
+
+      if (!mounted) {
+        return photoUrl;
+      }
+
+      setState(() {
+        _profilePhotoUrl = photoUrl;
+        _isBusy = false;
+      });
+
+      _showSnackBar(
+        'Foto de perfil actualizada.',
+        backgroundColor: const Color(0xFF163928),
+      );
+      return photoUrl;
+    } catch (error) {
+      if (!mounted) {
+        return null;
+      }
+      setState(() {
+        _isBusy = false;
+      });
+      _showSnackBar('No se pudo subir la foto: $error');
+      return null;
+    }
+  }
+
   Future<void> _sendPasswordReset() async {
     final User? user = _firebaseUser;
     final String email = user?.email?.trim() ?? '';
@@ -854,6 +949,9 @@ class _CruchefAppState extends State<CruchefApp> {
     final String phone = _paymentPhoneController.text.trim();
     final String reference = _paymentReferenceController.text.trim();
     final String document = _paymentDocumentController.text.trim();
+    final String cardNumber = _paymentCardNumberController.text.trim();
+    final String cardExpiry = _paymentCardExpiryController.text.trim();
+    final String cardCvv = _paymentCardCvvController.text.trim();
 
     if (name.length < 3) {
       return 'Ingresa el nombre de quien paga.';
@@ -867,7 +965,16 @@ class _CruchefAppState extends State<CruchefApp> {
         return null;
       case PaymentMethod.card:
         if (document.length < 5) {
-          return 'Ingresa el documento del titular para pago con tarjeta.';
+          return 'Ingresa el documento del titular de la tarjeta.';
+        }
+        if (!_isValidCardNumber(cardNumber)) {
+          return 'Ingresa un numero de tarjeta valido.';
+        }
+        if (!_isValidCardExpiry(cardExpiry)) {
+          return 'Ingresa la fecha de vencimiento en formato MM/AA.';
+        }
+        if (!_isValidCardCvv(cardCvv)) {
+          return 'Ingresa el CVV de la tarjeta.';
         }
         return null;
       case PaymentMethod.transfer:
@@ -876,6 +983,70 @@ class _CruchefAppState extends State<CruchefApp> {
         }
         return null;
     }
+  }
+
+  bool _isValidCardNumber(String value) {
+    final String digits = value.replaceAll(RegExp(r'\D'), '');
+    if (digits.length < 13 || digits.length > 19) {
+      return false;
+    }
+
+    int sum = 0;
+    bool doubleDigit = false;
+    for (int index = digits.length - 1; index >= 0; index -= 1) {
+      int digit = int.parse(digits[index]);
+      if (doubleDigit) {
+        digit *= 2;
+        if (digit > 9) {
+          digit -= 9;
+        }
+      }
+      sum += digit;
+      doubleDigit = !doubleDigit;
+    }
+    return sum % 10 == 0;
+  }
+
+  bool _isValidCardExpiry(String value) {
+    final RegExpMatch? match = RegExp(
+      r'^\s*(\d{2})\s*/\s*(\d{2}|\d{4})\s*$',
+    ).firstMatch(value);
+    if (match == null) {
+      return false;
+    }
+
+    final int month = int.parse(match.group(1)!);
+    if (month < 1 || month > 12) {
+      return false;
+    }
+
+    final String rawYear = match.group(2)!;
+    final int year = rawYear.length == 2
+        ? 2000 + int.parse(rawYear)
+        : int.parse(rawYear);
+    final DateTime now = DateTime.now();
+    final DateTime lastValidDay = DateTime(year, month + 1, 0, 23, 59, 59);
+    return lastValidDay.isAfter(now);
+  }
+
+  bool _isValidCardCvv(String value) {
+    final String digits = value.replaceAll(RegExp(r'\D'), '');
+    return digits.length == 3 || digits.length == 4;
+  }
+
+  String _paymentReferenceForOrder() {
+    if (_selectedPaymentMethod != PaymentMethod.card) {
+      return _paymentReferenceController.text.trim();
+    }
+
+    final String digits = _paymentCardNumberController.text.replaceAll(
+      RegExp(r'\D'),
+      '',
+    );
+    final String lastFour = digits.length >= 4
+        ? digits.substring(digits.length - 4)
+        : digits;
+    return 'Tarjeta terminada en $lastFour - vence ${_paymentCardExpiryController.text.trim()}';
   }
 
   Future<bool> _confirmOrder() async {
@@ -952,7 +1123,7 @@ class _CruchefAppState extends State<CruchefApp> {
             paymentName: _paymentNameController.text.trim(),
             paymentDocument: _paymentDocumentController.text.trim(),
             paymentPhone: _paymentPhoneController.text.trim(),
-            paymentReference: _paymentReferenceController.text.trim(),
+            paymentReference: _paymentReferenceForOrder(),
           ),
         );
       }
@@ -1071,63 +1242,75 @@ class _CruchefAppState extends State<CruchefApp> {
       theme: CruchefDesign.theme,
       navigatorKey: _navigatorKey,
       scaffoldMessengerKey: _scaffoldMessengerKey,
-      home: Stack(
-        fit: StackFit.expand,
-        children: <Widget>[
-          _firebaseUser == null
-              ? LoginPage(
-                  onLogin: _login,
-                  isBusy: _isBusy,
-                  errorMessage: _loginError,
-                )
-              : UserShell(
-                  user: _firebaseUser!,
-                  firebaseOnline: _firebaseOnline,
-                  restaurants: _filteredRestaurants,
-                  selectedRestaurant: _selectedRestaurant,
-                  categories: _categories,
-                  selectedCategory: _selectedCategory,
-                  dishes: _visibleDishes,
-                  cartEntries: _cartEntries,
-                  cartCount: _cartCount,
-                  cartTotal: _cartTotal,
-                  selectedPaymentMethod: _selectedPaymentMethod,
-                  trackingOrders: _trackingOrders,
-                  historyOrders: _historyOrders,
-                  manualQrController: _manualQrController,
-                  voiceController: _voiceController,
-                  orderNotesController: _orderNotesController,
-                  paymentNameController: _paymentNameController,
-                  paymentDocumentController: _paymentDocumentController,
-                  paymentPhoneController: _paymentPhoneController,
-                  paymentReferenceController: _paymentReferenceController,
-                  onSelectRestaurant: _selectRestaurant,
-                  onSelectCategory: _selectCategory,
-                  onAddToCart: _addToCart,
-                  onRemoveFromCart: _removeFromCart,
-                  onCancelCart: _cancelCart,
-                  onSelectPaymentMethod: _selectPaymentMethod,
-                  onOrderNotesChanged: (String value) {
-                    _updateOrderNotes(value);
-                    _updatePaymentDetails(value);
-                  },
-                  onOpenScanner: _openScanner,
-                  onSubmitManualQr: _submitManualQr,
-                  onRestaurantSearchChanged: _updateRestaurantSearch,
-                  onAnalyzeVoiceText: _analyzeVoiceText,
-                  onPlaceOrder: _placeOrder,
-                  onRateOrder: _rateOrder,
-                  onRefresh: _bootstrap,
-                  onRefreshProfile: _refreshProfile,
-                  onUpdateProfileName: _updateProfileName,
-                  onUpdateProfileDetails: _updateProfileDetails,
-                  onSendPasswordReset: _sendPasswordReset,
-                  onLogout: _logout,
-                  profilePhone: _profilePhone,
-                  profilePhotoUrl: _profilePhotoUrl,
-                ),
-          if (_isBusy) const BusyOverlay(),
-        ],
+      home: AnnotatedRegion<SystemUiOverlayStyle>(
+        value: const SystemUiOverlayStyle(
+          statusBarColor: CruchefColors.page,
+          statusBarIconBrightness: Brightness.light,
+          systemNavigationBarColor: CruchefColors.page,
+          systemNavigationBarIconBrightness: Brightness.light,
+        ),
+        child: Stack(
+          fit: StackFit.expand,
+          children: <Widget>[
+            _firebaseUser == null
+                ? LoginPage(
+                    onLogin: _login,
+                    isBusy: _isBusy,
+                    errorMessage: _loginError,
+                  )
+                : UserShell(
+                    user: _firebaseUser!,
+                    firebaseOnline: _firebaseOnline,
+                    restaurants: _filteredRestaurants,
+                    selectedRestaurant: _selectedRestaurant,
+                    categories: _categories,
+                    selectedCategory: _selectedCategory,
+                    dishes: _visibleDishes,
+                    cartEntries: _cartEntries,
+                    cartCount: _cartCount,
+                    cartTotal: _cartTotal,
+                    selectedPaymentMethod: _selectedPaymentMethod,
+                    trackingOrders: _trackingOrders,
+                    historyOrders: _historyOrders,
+                    manualQrController: _manualQrController,
+                    voiceController: _voiceController,
+                    orderNotesController: _orderNotesController,
+                    paymentNameController: _paymentNameController,
+                    paymentDocumentController: _paymentDocumentController,
+                    paymentPhoneController: _paymentPhoneController,
+                    paymentReferenceController: _paymentReferenceController,
+                    paymentCardNumberController: _paymentCardNumberController,
+                    paymentCardExpiryController: _paymentCardExpiryController,
+                    paymentCardCvvController: _paymentCardCvvController,
+                    onSelectRestaurant: _selectRestaurant,
+                    onSelectCategory: _selectCategory,
+                    onAddToCart: _addToCart,
+                    onRemoveFromCart: _removeFromCart,
+                    onCancelCart: _cancelCart,
+                    onSelectPaymentMethod: _selectPaymentMethod,
+                    onOrderNotesChanged: (String value) {
+                      _updateOrderNotes(value);
+                      _updatePaymentDetails(value);
+                    },
+                    onOpenScanner: _openScanner,
+                    onSubmitManualQr: _submitManualQr,
+                    onRestaurantSearchChanged: _updateRestaurantSearch,
+                    onAnalyzeVoiceText: _analyzeVoiceText,
+                    onPlaceOrder: _placeOrder,
+                    onRateOrder: _rateOrder,
+                    onRefresh: _bootstrap,
+                    onRefreshProfile: _refreshProfile,
+                    onUpdateProfileName: _updateProfileName,
+                    onUpdateProfileDetails: _updateProfileDetails,
+                    onPickProfilePhoto: _pickAndUploadProfilePhoto,
+                    onSendPasswordReset: _sendPasswordReset,
+                    onLogout: _logout,
+                    profilePhone: _profilePhone,
+                    profilePhotoUrl: _profilePhotoUrl,
+                  ),
+            if (_isBusy) const BusyOverlay(),
+          ],
+        ),
       ),
     );
   }
@@ -1545,11 +1728,11 @@ class CruchefRepository {
   }) async {
     Query<Map<String, dynamic>> query;
     if (customerUid != null && customerUid.isNotEmpty) {
-      query = _userOrders(customerUid);
+      query = _rootOrders.where('customerUid', isEqualTo: customerUid);
     } else if (ownerUid != null && ownerUid.isNotEmpty) {
-      query = _allOrders.where('ownerUid', isEqualTo: ownerUid);
+      query = _rootOrders.where('ownerUid', isEqualTo: ownerUid);
     } else {
-      query = _allOrders;
+      query = _rootOrders;
     }
     if (status != null && status.isNotEmpty) {
       query = query.where('status', isEqualTo: status);
@@ -1575,25 +1758,34 @@ class CruchefRepository {
       ..['deliveredAt'] = null
       ..['createdAt'] = FieldValue.serverTimestamp()
       ..['updatedAt'] = FieldValue.serverTimestamp();
+    final DocumentReference<Map<String, dynamic>> rootOrder = _rootOrders.doc();
+    await rootOrder.set(data);
     final DocumentReference<Map<String, dynamic>> ownerOrder =
-        await _restaurantOrders(
+        _restaurantOrders(
           payload.ownerUid,
           payload.restaurantId,
-        ).add(data);
+        ).doc(rootOrder.id);
+    await ownerOrder.set(<String, dynamic>{
+      ...data,
+      'rootOrderPath': rootOrder.path,
+      'createdAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
     final DocumentReference<Map<String, dynamic>> customerOrder = _userOrders(
       payload.customerUid,
-    ).doc(ownerOrder.id);
+    ).doc(rootOrder.id);
     await customerOrder.set(<String, dynamic>{
       ...data,
+      'rootOrderPath': rootOrder.path,
       'ownerOrderPath': ownerOrder.path,
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
     await _createOwnerOrderNotification(
       payload: payload,
-      orderId: ownerOrder.id,
+      orderId: rootOrder.id,
     );
-    return OrderRecord.fromJson(_withDocumentId(await customerOrder.get()));
+    return OrderRecord.fromJson(_withDocumentId(await rootOrder.get()));
   }
 
   Future<OrderRecord> updateOrderStatus({
@@ -1643,8 +1835,8 @@ class CruchefRepository {
   Query<Map<String, dynamic>> get _restaurants =>
       _firestore.collectionGroup('restaurants');
 
-  Query<Map<String, dynamic>> get _allOrders =>
-      _firestore.collectionGroup('orders');
+  CollectionReference<Map<String, dynamic>> get _rootOrders =>
+      _firestore.collection('orders');
 
   CollectionReference<Map<String, dynamic>> get _notifications =>
       _firestore.collection('notifications');
@@ -1710,6 +1902,33 @@ class CruchefRepository {
       'profilePhotoUrl': photoUrl,
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
+  }
+
+  Future<String> uploadUserProfilePhoto({
+    required String userUid,
+    required Uint8List bytes,
+    required String fileName,
+    String? mimeType,
+  }) async {
+    final String extension = fileName.split('.').last.toLowerCase();
+    final String safeExtension = extension.length > 5 || extension == fileName
+        ? 'jpg'
+        : extension;
+    final Reference reference = _storage.ref(
+      'users/$userUid/profile/photo.$safeExtension',
+    );
+    final SettableMetadata metadata = SettableMetadata(
+      contentType: mimeType ?? 'image/$safeExtension',
+      customMetadata: <String, String>{'uploadedBy': userUid},
+    );
+    await reference.putData(bytes, metadata);
+    final String photoUrl = await reference.getDownloadURL();
+    await _firestore.collection('users').doc(userUid).set(<String, dynamic>{
+      'photoUrl': photoUrl,
+      'profilePhotoUrl': photoUrl,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+    return photoUrl;
   }
 
   Future<void> _createOwnerOrderNotification({
