@@ -7,6 +7,7 @@ Aplicación Flutter para clientes de CruChef. Permite iniciar sesión, seleccion
 - Flutter SDK compatible con Dart `^3.11.5`
 - Proyecto Firebase configurado para Android, iOS y Web
 - Archivo `android/app/google-services.json` incluido para Android
+- No requiere backend local: restaurantes, platos, pedidos, perfil, fotos y notificaciones se leen/escriben en Firebase.
 
 ## Ejecutar
 
