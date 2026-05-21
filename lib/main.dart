@@ -1187,8 +1187,14 @@ class _CruchefAppState extends State<CruchefApp> {
   }
 
   Future<void> _rateOrder(OrderRecord order) async {
+    final BuildContext? dialogContext = _navigatorKey.currentContext;
+    if (dialogContext == null) {
+      _showSnackBar('No se pudo abrir la calificacion. Intenta nuevamente.');
+      return;
+    }
+
     final RatingResult? result = await showDialog<RatingResult>(
-      context: context,
+      context: dialogContext,
       builder: (BuildContext context) => RatingDialog(order: order),
     );
 
