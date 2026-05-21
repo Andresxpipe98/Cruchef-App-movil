@@ -1625,6 +1625,11 @@ class OrderCreatePayload {
   final String paymentPhone;
   final String paymentReference;
 
+  String get safeDishImageUrl {
+    final String trimmed = dishImageUrl.trim();
+    return trimmed.isEmpty ? 'LogoCruChef.png' : trimmed;
+  }
+
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
       'ownerUid': ownerUid,
@@ -1635,7 +1640,7 @@ class OrderCreatePayload {
       'customerName': customerName,
       'dishId': dishId,
       'dishName': dishName,
-      'dishImageUrl': dishImageUrl,
+      'dishImageUrl': safeDishImageUrl,
       'categoryId': categoryId,
       'quantity': quantity,
       'unitPrice': unitPrice,
@@ -1663,10 +1668,20 @@ class CruchefRepository {
     : _firestore = firestore ?? FirebaseFirestore.instance,
       _storage = storage ?? FirebaseStorage.instance;
 
-  static const String _apiBaseUrl = String.fromEnvironment(
+  static const String _configuredApiBaseUrl = String.fromEnvironment(
     'CRUCHEF_API_BASE_URL',
-    defaultValue: 'http://10.0.2.2:3000/api',
+    defaultValue: '',
   );
+
+  List<String> get _apiBaseUrls {
+    final List<String> urls = <String>[
+      if (_configuredApiBaseUrl.trim().isNotEmpty) _configuredApiBaseUrl.trim(),
+      'http://10.0.2.2:3000/api',
+      'http://localhost:3000/api',
+      'http://127.0.0.1:3000/api',
+    ];
+    return urls.toSet().toList(growable: false);
+  }
 
   Future<bool> health() async {
     await _restaurants.limit(1).get();
@@ -1769,9 +1784,11 @@ class CruchefRepository {
   }
 
   Future<OrderRecord> createOrder(OrderCreatePayload payload) async {
+    Object? backendError;
     try {
       return await _createOrderThroughApi(payload);
     } catch (error) {
+      backendError = error;
       debugPrint('No se pudo crear el pedido por backend: $error');
     }
 
@@ -1791,7 +1808,7 @@ class CruchefRepository {
           plugin: error.plugin,
           code: error.code,
           message:
-              'Firestore nego la escritura directa en orders. Ejecuta el backend de CruChef o configura CRUCHEF_API_BASE_URL.',
+              'Firestore nego la escritura directa en orders. ${_backendFallbackHint(backendError)}',
         );
       }
       rethrow;
@@ -1854,49 +1871,94 @@ class CruchefRepository {
       query['status'] = status;
     }
 
-    final Uri uri = Uri.parse(
-      '$_apiBaseUrl/orders',
-    ).replace(queryParameters: query.isEmpty ? null : query);
-    final http.Response response = await http.get(uri);
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw StateError(
-        'Backend rechazo la consulta de pedidos (${response.statusCode}).',
-      );
+    Object? lastError;
+    for (final String apiBaseUrl in _apiBaseUrls) {
+      try {
+        final Uri uri = Uri.parse(
+          '$apiBaseUrl/orders',
+        ).replace(queryParameters: query.isEmpty ? null : query);
+        final http.Response response = await http
+            .get(uri)
+            .timeout(const Duration(seconds: 8));
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          throw StateError(
+            'Backend rechazo la consulta de pedidos (${response.statusCode}): ${_readBackendMessage(response.body)}',
+          );
+        }
+
+        final Object? decoded = jsonDecode(response.body);
+        if (decoded is! List<dynamic>) {
+          return <OrderRecord>[];
+        }
+
+        final List<OrderRecord> orders = decoded
+            .whereType<Map<String, dynamic>>()
+            .map(OrderRecord.fromJson)
+            .toList(growable: false);
+        orders.sort(
+          (OrderRecord a, OrderRecord b) => b.createdAt.compareTo(a.createdAt),
+        );
+        return orders;
+      } catch (error) {
+        lastError = error;
+      }
     }
 
-    final Object? decoded = jsonDecode(response.body);
-    if (decoded is! List<dynamic>) {
-      return <OrderRecord>[];
-    }
-
-    final List<OrderRecord> orders = decoded
-        .whereType<Map<String, dynamic>>()
-        .map(OrderRecord.fromJson)
-        .toList(growable: false);
-    orders.sort(
-      (OrderRecord a, OrderRecord b) => b.createdAt.compareTo(a.createdAt),
-    );
-    return orders;
+    throw StateError(_backendFallbackHint(lastError));
   }
 
   Future<OrderRecord> _createOrderThroughApi(OrderCreatePayload payload) async {
-    final Uri uri = Uri.parse('$_apiBaseUrl/orders');
-    final http.Response response = await http.post(
-      uri,
-      headers: const <String, String>{'Content-Type': 'application/json'},
-      body: jsonEncode(payload.toJson()),
-    );
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw StateError(
-        'Backend rechazo el pedido (${response.statusCode}): ${response.body}',
-      );
+    Object? lastError;
+    for (final String apiBaseUrl in _apiBaseUrls) {
+      try {
+        final Uri uri = Uri.parse('$apiBaseUrl/orders');
+        final http.Response response = await http
+            .post(
+              uri,
+              headers: const <String, String>{
+                'Content-Type': 'application/json',
+              },
+              body: jsonEncode(payload.toJson()),
+            )
+            .timeout(const Duration(seconds: 10));
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          throw StateError(
+            'Backend rechazo el pedido (${response.statusCode}): ${_readBackendMessage(response.body)}',
+          );
+        }
+
+        final Object? decoded = jsonDecode(response.body);
+        if (decoded is! Map<String, dynamic>) {
+          throw StateError('El backend respondio un pedido invalido.');
+        }
+        return OrderRecord.fromJson(decoded);
+      } catch (error) {
+        lastError = error;
+      }
     }
 
-    final Object? decoded = jsonDecode(response.body);
-    if (decoded is! Map<String, dynamic>) {
-      throw StateError('El backend respondio un pedido invalido.');
-    }
-    return OrderRecord.fromJson(decoded);
+    throw StateError(_backendFallbackHint(lastError));
+  }
+
+  String _readBackendMessage(String body) {
+    try {
+      final Object? decoded = jsonDecode(body);
+      if (decoded is Map<String, dynamic>) {
+        final String message = _readString(decoded, <String>[
+          'message',
+          'error',
+        ]);
+        if (message.isNotEmpty) {
+          return message;
+        }
+      }
+    } catch (_) {}
+    return body.trim().isEmpty ? 'sin detalle' : body.trim();
+  }
+
+  String _backendFallbackHint(Object? error) {
+    final String detail = error == null ? '' : ' Detalle: $error';
+    return 'Ejecuta el backend de CruChef en http://localhost:3000 o compila la app con --dart-define=CRUCHEF_API_BASE_URL=http://TU_IP:3000/api.$detail';
   }
 
   Future<OrderRecord> updateOrderStatus({
